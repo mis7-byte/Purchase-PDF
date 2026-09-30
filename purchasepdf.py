@@ -61,8 +61,8 @@ class AppPDF(FPDF):
         self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
 
-def generate_pdf_report(date_str, df_primary, primary_sums, fig_bar=None, fig_pie=None):
-    """Generates a PDF styled directly after the Streamlit App layout."""
+def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, compare_sums=None, fig_bar=None, fig_pie=None):
+    """Generates a PDF styled directly after the Streamlit App layout sequence."""
     pdf = AppPDF(orientation="L", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
@@ -72,7 +72,9 @@ def generate_pdf_report(date_str, df_primary, primary_sums, fig_bar=None, fig_pi
     pdf.cell(0, 10, f"Dashboard Overview - {date_str}", ln=True, align="L")
     pdf.ln(2)
 
-    # --- SECTION 1: KEY METRICS OVERVIEW ---
+    # ---------------------------------------------------------
+    # 1. KEY METRICS OVERVIEW & ORDERS & MOVEMENTS (KPI CARDS)
+    # ---------------------------------------------------------
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 6, f"Key Metrics Overview: {date_str}", ln=True)
     pdf.ln(2)
@@ -125,9 +127,50 @@ def generate_pdf_report(date_str, df_primary, primary_sums, fig_bar=None, fig_pi
         pdf.set_font("Helvetica", "B", 12)
         pdf.cell(card_w_r2, 6, f"{val:,.3f}", align="C")
 
-    pdf.set_y(start_y + card_h + 8)
+    pdf.set_y(start_y + card_h + 6)
 
-    # --- SECTION 2: VISUAL ANALYSIS (CHARTS) ---
+    # ---------------------------------------------------------
+    # 2. METRICS SUMMARY TABLE (FULL METRICS DETAIL SECTION)
+    # ---------------------------------------------------------
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 6, "Full Metrics Summary Table", ln=True)
+    pdf.ln(1)
+
+    has_compare = compare_sums is not None
+    sum_cols = ["Metric", f"{date_str} Total"]
+    sum_widths = [100, 100]
+    if has_compare:
+        sum_cols = ["Metric", f"{date_str} Total", f"{compare_date} Total", "Difference"]
+        sum_widths = [70, 70, 70, 60]
+
+    # Table Header
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_fill_color(240, 240, 240)
+    for col_name, w in zip(sum_cols, sum_widths):
+        pdf.cell(w, 5, col_name, border=1, align="C", fill=True)
+    pdf.ln()
+
+    # Table Rows
+    pdf.set_font("Helvetica", "", 8)
+    for m in METRIC_COLS:
+        pdf.cell(sum_widths[0], 5, m, border=1, align="L")
+        pdf.cell(sum_widths[1], 5, f"{primary_sums.get(m, 0):,.3f}", border=1, align="R")
+        if has_compare:
+            p_val = primary_sums.get(m, 0)
+            c_val = compare_sums.get(m, 0)
+            pdf.cell(sum_widths[2], 5, f"{c_val:,.3f}", border=1, align="R")
+            pdf.cell(sum_widths[3], 5, f"{p_val - c_val:+,.3f}", border=1, align="R")
+        pdf.ln()
+
+    pdf.ln(4)
+
+    # ---------------------------------------------------------
+    # 3. VISUAL ANALYSIS (GRAPHS)
+    # ---------------------------------------------------------
+    # Move charts to next page if vertical space is limited
+    if pdf.get_y() > 120:
+        pdf.add_page()
+
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 8, "Visual Analysis", ln=True)
     pdf.ln(2)
@@ -153,10 +196,11 @@ def generate_pdf_report(date_str, df_primary, primary_sums, fig_bar=None, fig_pi
         except Exception:
             pdf.rect(145, chart_y, img_w, img_h)
 
-    # Move to Next Page for Detailed Table
+    # ---------------------------------------------------------
+    # 4. DETAILED DATA TABLE (FULL STOCK ITEMIZATION)
+    # ---------------------------------------------------------
     pdf.add_page()
 
-    # --- SECTION 3: DETAILED DATA TABLE ---
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 8, f"Detailed Data Table ({date_str})", ln=True)
     pdf.ln(3)
@@ -164,7 +208,6 @@ def generate_pdf_report(date_str, df_primary, primary_sums, fig_bar=None, fig_pi
     table_cols = ["SR.NO.", "CAT.", "THIK", "WIDTH", "GD STOCK", "COIL", "SOLD QTY", "INTANS", "BOOKING", "SAIL BSO", "BAL. QTY"]
     col_widths = [14, 20, 16, 18, 25, 20, 25, 22, 22, 22, 28]
 
-    # Function to draw table header
     def draw_table_header():
         pdf.set_font("Helvetica", "B", 8)
         pdf.set_fill_color(230, 230, 230)
@@ -194,7 +237,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, fig_bar=None, fig_pi
         pdf.cell(col_widths[10], 5, f"{row.get('BAL. QTY', 0):,.2f}", border=1, align="R")
         pdf.ln()
 
-    # Total Summary Row at Bottom
+    # Total Summary Row
     if pdf.get_y() > 180:
         pdf.add_page()
         draw_table_header()
@@ -344,6 +387,8 @@ if uploaded_file:
         date_str=selected_date,
         df_primary=df_primary,
         primary_sums=primary_sums,
+        compare_date=compare_date,
+        compare_sums=compare_sums,
         fig_bar=fig_bar,
         fig_pie=fig_pie
     )
