@@ -149,9 +149,9 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
 
-    # Header Banner
+    # Header Banner (Fixed style parameter)
     pdf.set_fill_color(*PRIMARY_COLOR)
-    pdf.rect(0, 0, 297, 22, fill=True)
+    pdf.rect(0, 0, 297, 22, style="F")
     
     pdf.set_xy(12, 6)
     pdf.set_font("Helvetica", "B", 16)
