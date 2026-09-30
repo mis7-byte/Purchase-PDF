@@ -18,6 +18,15 @@ METRIC_COLS = [
     "INTANS", "BOOKING", "SAIL BSO", "BAL. QTY"
 ]
 
+# --- MODERN PDF COLOR PALETTE ---
+PRIMARY_COLOR = (26, 54, 93)     # Deep Navy (#1A365D)
+SECONDARY_COLOR = (66, 153, 225) # Soft Blue (#4299E1)
+BG_CARD = (240, 244, 248)        # Light Blue-Gray (#F0F4F8)
+TEXT_DARK = (45, 55, 72)         # Charcoal Dark Text (#2D3748)
+TEXT_MUTED = (113, 128, 150)     # Gray Label Text (#718096)
+BORDER_COLOR = (226, 232, 240)   # Light Border Gray (#E2E8F0)
+ROW_ALT = (248, 250, 252)        # Alternating Row Striping (#F8FAFC)
+
 
 # --- HELPER FUNCTIONS ---
 def parse_sheet_data(uploaded_file, sheet_name):
@@ -51,39 +60,38 @@ def parse_sheet_data(uploaded_file, sheet_name):
 
 
 def generate_bar_chart_bytes(cat_df, date_str):
-    """Generates a clean bar chart with data labels above bars using Matplotlib."""
+    """Generates a clean bar chart matching the modern color palette."""
     fig, ax = plt.subplots(figsize=(6, 3.5), dpi=200)
     
     categories = cat_df["CAT."].astype(str).tolist()
     x = range(len(categories))
     width = 0.25
 
-    # Plot bars
-    rects1 = ax.bar([i - width for i in x], cat_df["GD STOCK"], width=width, label="GD STOCK", color="#1f77b4")
-    rects2 = ax.bar(x, cat_df["SOLD QTY"], width=width, label="SOLD QTY", color="#aec7e8")
-    rects3 = ax.bar([i + width for i in x], cat_df["BAL. QTY"], width=width, label="BAL. QTY", color="#d62728")
+    # Modernized color choices
+    rects1 = ax.bar([i - width for i in x], cat_df["GD STOCK"], width=width, label="GD STOCK", color="#1A365D")
+    rects2 = ax.bar(x, cat_df["SOLD QTY"], width=width, label="SOLD QTY", color="#4299E1")
+    rects3 = ax.bar([i + width for i in x], cat_df["BAL. QTY"], width=width, label="BAL. QTY", color="#E74C3C")
 
-    # Add data labels on top of each bar
+    # Bar labels
     for rects in [rects1, rects2, rects3]:
-        ax.bar_label(rects, fmt="%.1f", padding=3, fontsize=7, rotation=0)
+        ax.bar_label(rects, fmt="%.1f", padding=3, fontsize=7, color="#2D3748", fontweight="bold")
 
-    # Styling & Clean Aesthetics
+    # Styling
     ax.set_xticks(list(x))
-    ax.set_xticklabels(categories, fontsize=8)
-    ax.set_title(f"Stock Distribution by Category ({date_str})", fontsize=10, fontweight="bold", pad=12)
-    ax.legend(fontsize=7, loc="upper left")
+    ax.set_xticklabels(categories, fontsize=8, color="#2D3748", fontweight="bold")
+    ax.set_title(f"Stock Distribution by Category ({date_str})", fontsize=10, fontweight="bold", color="#1A365D", pad=12)
+    ax.legend(fontsize=7, loc="upper left", frameon=True, facecolor="#F8FAFC", edgecolor="none")
     
-    # Hide top and right spines
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.grid(axis="y", linestyle="--", alpha=0.3)
+    ax.spines["left"].set_color("#CBD5E0")
+    ax.spines["bottom"].set_color("#CBD5E0")
+    ax.grid(axis="y", linestyle="--", alpha=0.4, color="#CBD5E0")
 
-    # Add y-axis headroom so labels aren't cut off at the top
     max_val = max(cat_df[["GD STOCK", "SOLD QTY", "BAL. QTY"]].max().max(), 1)
     ax.set_ylim(0, max_val * 1.18)
 
     plt.tight_layout()
-
     buf = io.BytesIO()
     plt.savefig(buf, format="png", bbox_inches="tight")
     plt.close(fig)
@@ -92,7 +100,7 @@ def generate_bar_chart_bytes(cat_df, date_str):
 
 
 def generate_pie_chart_bytes(cat_df, date_str):
-    """Generates a clean pie chart with percentages and category labels."""
+    """Generates a styled pie chart matching the modern design."""
     fig, ax = plt.subplots(figsize=(6, 3.5), dpi=200)
     
     valid_df = cat_df[cat_df["GD STOCK"] > 0]
@@ -104,16 +112,17 @@ def generate_pie_chart_bytes(cat_df, date_str):
         labels=valid_df["CAT."], 
         autopct="%1.1f%%", 
         startangle=90, 
-        pctdistance=0.75,
-        colors=["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c"],
-        textprops=dict(fontsize=8)
+        pctdistance=0.72,
+        colors=["#1A365D", "#4299E1", "#319795", "#ED8936", "#9F7AEA"],
+        textprops=dict(fontsize=8, color="#2D3748")
     )
 
     for autotext in autotexts:
         autotext.set_fontweight("bold")
+        autotext.set_color("white")
         autotext.set_fontsize(8)
 
-    ax.set_title(f"GD Stock Share by Category ({date_str})", fontsize=10, fontweight="bold", pad=12)
+    ax.set_title(f"GD Stock Share by Category ({date_str})", fontsize=10, fontweight="bold", color="#1A365D", pad=12)
     plt.tight_layout()
 
     buf = io.BytesIO()
@@ -130,28 +139,33 @@ class AppPDF(FPDF):
     def footer(self):
         self.set_y(-10)
         self.set_font("Helvetica", "I", 8)
+        self.set_text_color(*TEXT_MUTED)
         self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
 
 def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, compare_sums=None):
-    """Generates a multi-page PDF report matching dashboard layouts cleanly."""
+    """Generates a styled PDF report."""
     pdf = AppPDF(orientation="L", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
 
-    # Dashboard Banner
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.cell(0, 10, f"Dashboard Overview - {date_str}", ln=True, align="L")
-    pdf.ln(2)
+    # Header Banner
+    pdf.set_fill_color(*PRIMARY_COLOR)
+    pdf.rect(0, 0, 297, 22, fill=True)
+    
+    pdf.set_xy(12, 6)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(0, 10, f"Dashboard Overview - {date_str}", align="L")
+    
+    pdf.set_y(28)
 
-    # ---------------------------------------------------------
-    # 1. KEY METRICS OVERVIEW & ORDERS & MOVEMENTS
-    # ---------------------------------------------------------
+    # 1. KEY METRICS CARDS
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 6, f"Key Metrics Overview: {date_str}", ln=True)
+    pdf.set_text_color(*PRIMARY_COLOR)
+    pdf.cell(0, 6, "Key Metrics Overview", ln=True)
     pdf.ln(2)
 
-    # Core Stock Cards
     row1_metrics = [
         ("GD STOCK", primary_sums.get("GD STOCK", 0)),
         ("SOLD QTY", primary_sums.get("SOLD QTY", 0)),
@@ -159,25 +173,33 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
         ("BAL. QTY", primary_sums.get("BAL. QTY", 0)),
     ]
 
-    card_w = 65
-    card_h = 15
-    start_x = 10
+    card_w = 66
+    card_h = 16
+    start_x = 12
     start_y = pdf.get_y()
 
     for idx, (label, val) in enumerate(row1_metrics):
         x = start_x + idx * (card_w + 3)
-        pdf.rect(x, start_y, card_w, card_h)
-        pdf.set_xy(x, start_y + 2)
-        pdf.set_font("Helvetica", "", 8)
+        
+        pdf.set_fill_color(*BG_CARD)
+        pdf.set_draw_color(*BORDER_COLOR)
+        pdf.rect(x, start_y, card_w, card_h, style="FD")
+        
+        pdf.set_xy(x, start_y + 2.5)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(*TEXT_MUTED)
         pdf.cell(card_w, 4, label, align="C")
-        pdf.set_xy(x, start_y + 7)
-        pdf.set_font("Helvetica", "B", 11)
+        
+        pdf.set_xy(x, start_y + 7.5)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_text_color(*PRIMARY_COLOR)
         pdf.cell(card_w, 6, f"{val:,.3f}", align="C")
 
-    pdf.set_y(start_y + card_h + 4)
+    pdf.set_y(start_y + card_h + 6)
 
     # Orders & Movements
     pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(*PRIMARY_COLOR)
     pdf.cell(0, 6, "Orders & Movements", ln=True)
     pdf.ln(2)
 
@@ -188,79 +210,90 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     ]
 
     start_y = pdf.get_y()
-    card_w_r2 = 87
+    card_w_r2 = 88
     for idx, (label, val) in enumerate(row2_metrics):
         x = start_x + idx * (card_w_r2 + 4)
-        pdf.rect(x, start_y, card_w_r2, card_h)
-        pdf.set_xy(x, start_y + 2)
-        pdf.set_font("Helvetica", "", 8)
+        
+        pdf.set_fill_color(*BG_CARD)
+        pdf.set_draw_color(*BORDER_COLOR)
+        pdf.rect(x, start_y, card_w_r2, card_h, style="FD")
+        
+        pdf.set_xy(x, start_y + 2.5)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(*TEXT_MUTED)
         pdf.cell(card_w_r2, 4, label, align="C")
-        pdf.set_xy(x, start_y + 7)
-        pdf.set_font("Helvetica", "B", 11)
+        
+        pdf.set_xy(x, start_y + 7.5)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_text_color(*PRIMARY_COLOR)
         pdf.cell(card_w_r2, 6, f"{val:,.3f}", align="C")
 
-    pdf.set_y(start_y + card_h + 6)
+    pdf.set_y(start_y + card_h + 8)
 
-    # ---------------------------------------------------------
     # 2. FULL METRICS SUMMARY TABLE
-    # ---------------------------------------------------------
     pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(*PRIMARY_COLOR)
     pdf.cell(0, 6, "Full Metrics Summary Table", ln=True)
     pdf.ln(1)
 
     has_compare = compare_sums is not None
     sum_cols = ["Metric", f"{date_str} Total"]
-    sum_widths = [135, 135]
+    sum_widths = [136, 136]
     if has_compare:
         sum_cols = ["Metric", f"{date_str} Total", f"{compare_date} Total", "Difference"]
-        sum_widths = [70, 70, 70, 60]
+        sum_widths = [68, 68, 68, 68]
 
     # Table Header
     pdf.set_font("Helvetica", "B", 8)
-    pdf.set_fill_color(240, 240, 240)
+    pdf.set_fill_color(*PRIMARY_COLOR)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_draw_color(*PRIMARY_COLOR)
     for col_name, w in zip(sum_cols, sum_widths):
-        pdf.cell(w, 5, col_name, border=1, align="C", fill=True)
+        pdf.cell(w, 6, col_name, border=1, align="C", fill=True)
     pdf.ln()
 
     # Table Rows
     pdf.set_font("Helvetica", "", 8)
-    for m in METRIC_COLS:
-        pdf.cell(sum_widths[0], 5, m, border=1, align="L")
-        pdf.cell(sum_widths[1], 5, f"{primary_sums.get(m, 0):,.3f}", border=1, align="R")
+    pdf.set_draw_color(*BORDER_COLOR)
+    for idx, m in enumerate(METRIC_COLS):
+        bg = ROW_ALT if idx % 2 == 1 else (255, 255, 255)
+        pdf.set_fill_color(*bg)
+        pdf.set_text_color(*TEXT_DARK)
+        
+        pdf.cell(sum_widths[0], 5.5, f"  {m}", border="LRB", align="L", fill=True)
+        pdf.cell(sum_widths[1], 5.5, f"{primary_sums.get(m, 0):,.3f}  ", border="LRB", align="R", fill=True)
         if has_compare:
             p_val = primary_sums.get(m, 0)
             c_val = compare_sums.get(m, 0)
-            pdf.cell(sum_widths[2], 5, f"{c_val:,.3f}", border=1, align="R")
-            pdf.cell(sum_widths[3], 5, f"{p_val - c_val:+,.3f}", border=1, align="R")
+            pdf.cell(sum_widths[2], 5.5, f"{c_val:,.3f}  ", border="LRB", align="R", fill=True)
+            pdf.cell(sum_widths[3], 5.5, f"{p_val - c_val:+,.3f}  ", border="LRB", align="R", fill=True)
         pdf.ln()
 
-    # ---------------------------------------------------------
     # 3. VISUAL ANALYSIS (CHARTS PAGE)
-    # ---------------------------------------------------------
     pdf.add_page()
+    
     pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(*PRIMARY_COLOR)
     pdf.cell(0, 8, "Visual Analysis", ln=True)
     pdf.ln(2)
 
     if "CAT." in df_primary.columns:
         cat_df = df_primary.groupby("CAT.")[METRIC_COLS].sum().reset_index()
         
-        # Generate chart images with data labels
         bar_buf = generate_bar_chart_bytes(cat_df, date_str)
         pie_buf = generate_pie_chart_bytes(cat_df, date_str)
 
         chart_y = pdf.get_y()
-        img_w, img_h = 130, 75
+        img_w, img_h = 132, 75
 
-        pdf.image(bar_buf, x=10, y=chart_y, w=img_w, h=img_h)
-        pdf.image(pie_buf, x=145, y=chart_y, w=img_w, h=img_h)
+        pdf.image(bar_buf, x=12, y=chart_y, w=img_w, h=img_h)
+        pdf.image(pie_buf, x=150, y=chart_y, w=img_w, h=img_h)
 
-    # ---------------------------------------------------------
     # 4. DETAILED DATA TABLE
-    # ---------------------------------------------------------
     pdf.add_page()
 
     pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(*PRIMARY_COLOR)
     pdf.cell(0, 8, f"Detailed Data Table ({date_str})", ln=True)
     pdf.ln(3)
 
@@ -269,7 +302,9 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
 
     def draw_table_header():
         pdf.set_font("Helvetica", "B", 8)
-        pdf.set_fill_color(230, 230, 230)
+        pdf.set_fill_color(*PRIMARY_COLOR)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_draw_color(*PRIMARY_COLOR)
         for col, w in zip(table_cols, col_widths):
             pdf.cell(w, 6, col, border=1, align="C", fill=True)
         pdf.ln()
@@ -278,22 +313,28 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
 
     # Data Rows
     pdf.set_font("Helvetica", "", 8)
-    for _, row in df_primary.iterrows():
+    pdf.set_draw_color(*BORDER_COLOR)
+    
+    for r_idx, (_, row) in enumerate(df_primary.iterrows()):
         if pdf.get_y() > 180:
             pdf.add_page()
             draw_table_header()
 
-        pdf.cell(col_widths[0], 5, str(int(row["SR.NO."])) if pd.notna(row.get("SR.NO.")) else "", border=1, align="C")
-        pdf.cell(col_widths[1], 5, str(row.get("CAT.", ""))[:12], border=1, align="L")
-        pdf.cell(col_widths[2], 5, str(row.get("THIK", "")), border=1, align="C")
-        pdf.cell(col_widths[3], 5, str(row.get("WIDTH", "")), border=1, align="C")
-        pdf.cell(col_widths[4], 5, f"{row.get('GD STOCK', 0):,.2f}", border=1, align="R")
-        pdf.cell(col_widths[5], 5, f"{row.get('COIL', 0):,.2f}", border=1, align="R")
-        pdf.cell(col_widths[6], 5, f"{row.get('SOLD QTY', 0):,.2f}", border=1, align="R")
-        pdf.cell(col_widths[7], 5, f"{row.get('INTANS', 0):,.2f}", border=1, align="R")
-        pdf.cell(col_widths[8], 5, f"{row.get('BOOKING', 0):,.2f}", border=1, align="R")
-        pdf.cell(col_widths[9], 5, f"{row.get('SAIL BSO', 0):,.2f}", border=1, align="R")
-        pdf.cell(col_widths[10], 5, f"{row.get('BAL. QTY', 0):,.2f}", border=1, align="R")
+        bg = ROW_ALT if r_idx % 2 == 1 else (255, 255, 255)
+        pdf.set_fill_color(*bg)
+        pdf.set_text_color(*TEXT_DARK)
+
+        pdf.cell(col_widths[0], 5, str(int(row["SR.NO."])) if pd.notna(row.get("SR.NO.")) else "", border="LRB", align="C", fill=True)
+        pdf.cell(col_widths[1], 5, str(row.get("CAT.", ""))[:12], border="LRB", align="L", fill=True)
+        pdf.cell(col_widths[2], 5, str(row.get("THIK", "")), border="LRB", align="C", fill=True)
+        pdf.cell(col_widths[3], 5, str(row.get("WIDTH", "")), border="LRB", align="C", fill=True)
+        pdf.cell(col_widths[4], 5, f"{row.get('GD STOCK', 0):,.2f}", border="LRB", align="R", fill=True)
+        pdf.cell(col_widths[5], 5, f"{row.get('COIL', 0):,.2f}", border="LRB", align="R", fill=True)
+        pdf.cell(col_widths[6], 5, f"{row.get('SOLD QTY', 0):,.2f}", border="LRB", align="R", fill=True)
+        pdf.cell(col_widths[7], 5, f"{row.get('INTANS', 0):,.2f}", border="LRB", align="R", fill=True)
+        pdf.cell(col_widths[8], 5, f"{row.get('BOOKING', 0):,.2f}", border="LRB", align="R", fill=True)
+        pdf.cell(col_widths[9], 5, f"{row.get('SAIL BSO', 0):,.2f}", border="LRB", align="R", fill=True)
+        pdf.cell(col_widths[10], 5, f"{row.get('BAL. QTY', 0):,.2f}", border="LRB", align="R", fill=True)
         pdf.ln()
 
     # Total Summary Row
@@ -302,7 +343,9 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
         draw_table_header()
 
     pdf.set_font("Helvetica", "B", 8)
-    pdf.set_fill_color(200, 230, 200)
+    pdf.set_fill_color(220, 238, 222)
+    pdf.set_text_color(20, 83, 45)
+    pdf.set_draw_color(180, 220, 185)
 
     pdf.cell(col_widths[0] + col_widths[1] + col_widths[2] + col_widths[3], 6, "TOTAL", border=1, align="C", fill=True)
     for col, w in zip(METRIC_COLS, col_widths[4:]):
@@ -394,7 +437,7 @@ if uploaded_file:
                 fig_bar = px.bar(
                     cat_df, x="CAT.", y=["GD STOCK", "SOLD QTY", "BAL. QTY"],
                     barmode="group", title=f"Stock Distribution by Category ({selected_date})",
-                    text_auto=".1f"  # Adds data labels to Plotly interactive view
+                    text_auto=".1f"
                 )
                 fig_bar.update_traces(textposition="outside")
                 st.plotly_chart(fig_bar, use_container_width=True)
