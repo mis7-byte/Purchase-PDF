@@ -30,7 +30,7 @@ def parse_sheet_data(uploaded_file, sheet_name):
     # Drop empty rows
     df = df.dropna(how="all")
     
-    # Filter out summary/total rows at the bottom (keep only valid data rows with numeric SR.NO)
+    # Filter out summary/total rows at the bottom
     if "SR.NO." in df.columns:
         df["SR.NO._NUM"] = pd.to_numeric(df["SR.NO."], errors="coerce")
         df = df[df["SR.NO._NUM"].notna()].copy()
@@ -50,63 +50,98 @@ def parse_sheet_data(uploaded_file, sheet_name):
     return df
 
 
-def generate_pdf_report(date_str, df_summary, df_raw=None, compare_date_str=None, df_comp_summary=None):
-    """Generates a downloadable PDF report for a single date or comparison."""
-    pdf = FPDF()
+def generate_pdf_report(date_str, df_primary, primary_sums, compare_date_str=None, compare_sums=None):
+    """Generates a PDF styled exactly like the Streamlit App layout."""
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=10)
     pdf.add_page()
+    
+    # --- PAGE TITLE ---
     pdf.set_font("Helvetica", "B", 16)
+    title_text = f"Stock Summary Report - {date_str}" if not compare_date_str else f"Stock Comparison Report: {date_str} vs {compare_date_str}"
+    pdf.cell(0, 10, title_text, ln=True, align="C")
+    pdf.ln(3)
 
-    # Title
-    if compare_date_str:
-        pdf.cell(0, 10, f"Stock Comparison Report: {date_str} vs {compare_date_str}", ln=True, align="C")
-    else:
-        pdf.cell(0, 10, f"Daily Stock Summary Report - {date_str}", ln=True, align="C")
-
-    pdf.ln(5)
+    # --- SECTION 1: KEY METRICS OVERVIEW (App KPI Cards Layout) ---
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "Key Metric Totals:", ln=True)
-    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 7, "Key Metrics Overview", ln=True)
+    pdf.ln(2)
 
-    # Summary Table
-    pdf.set_fill_color(240, 240, 240)
-    pdf.cell(60, 7, "Metric", 1, 0, "C", fill=True)
-    pdf.cell(60, 7, f"Date: {date_str}", 1, 0, "C", fill=True)
-    if compare_date_str:
-        pdf.cell(60, 7, f"Date: {compare_date_str}", 1, 0, "C", fill=True)
+    # KPI Card Layout
+    kpi_list = [
+        ("GD STOCK", primary_sums.get("GD STOCK", 0)),
+        ("SOLD QTY", primary_sums.get("SOLD QTY", 0)),
+        ("INTANS", primary_sums.get("INTANS", 0)),
+        ("BAL. QTY", primary_sums.get("BAL. QTY", 0)),
+        ("TOTAL COIL", primary_sums.get("COIL", 0)),
+        ("TOTAL BOOKING", primary_sums.get("BOOKING", 0)),
+        ("TOTAL SAIL BSO", primary_sums.get("SAIL BSO", 0))
+    ]
+
+    card_w = 38
+    card_h = 16
+
+    for idx, (label, val) in enumerate(kpi_list):
+        if idx > 0 and idx % 7 == 0:
+            pdf.ln(card_h + 3)
+        
+        x_pos = 10 + (idx % 7) * (card_w + 1)
+        y_pos = pdf.get_y()
+        
+        # Draw Card Box
+        pdf.rect(x_pos, y_pos, card_w, card_h)
+        
+        # Card Label
+        pdf.set_xy(x_pos, y_pos + 2)
+        pdf.set_font("Helvetica", "B", 7)
+        pdf.cell(card_w, 4, label, align="C")
+        
+        # Card Value
+        pdf.set_xy(x_pos, y_pos + 7)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(card_w, 6, f"{val:,.2f}", align="C")
+
+    pdf.set_y(pdf.get_y() + card_h + 6)
+
+    # --- SECTION 2: DETAILED DATA TABLE ---
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 7, f"Detailed Data Table ({date_str})", ln=True)
+    pdf.ln(2)
+
+    table_cols = ["SR.NO.", "CAT.", "THIK", "WIDTH", "GD STOCK", "COIL", "SOLD QTY", "INTANS", "BOOKING", "SAIL BSO", "BAL. QTY"]
+    col_widths = [14, 20, 16, 18, 25, 20, 25, 22, 22, 22, 28]
+
+    # Header Row
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_fill_color(230, 230, 230)
+    for col, w in zip(table_cols, col_widths):
+        pdf.cell(w, 6, col, border=1, align="C", fill=True)
     pdf.ln()
 
-    for col in METRIC_COLS:
-        val1 = df_summary.get(col, 0)
-        pdf.cell(60, 6, col, 1)
-        pdf.cell(60, 6, f"{val1:,.3f}", 1, 0, "R")
-        if compare_date_str and df_comp_summary is not None:
-            val2 = df_comp_summary.get(col, 0)
-            pdf.cell(60, 6, f"{val2:,.3f}", 1, 0, "R")
+    # Data Rows
+    pdf.set_font("Helvetica", "", 8)
+    for _, row in df_primary.iterrows():
+        pdf.cell(col_widths[0], 5, str(int(row["SR.NO."])) if pd.notna(row.get("SR.NO.")) else "", border=1, align="C")
+        pdf.cell(col_widths[1], 5, str(row.get("CAT.", ""))[:12], border=1, align="L")
+        pdf.cell(col_widths[2], 5, str(row.get("THIK", "")), border=1, align="C")
+        pdf.cell(col_widths[3], 5, str(row.get("WIDTH", "")), border=1, align="C")
+        pdf.cell(col_widths[4], 5, f"{row.get('GD STOCK', 0):,.2f}", border=1, align="R")
+        pdf.cell(col_widths[5], 5, f"{row.get('COIL', 0):,.2f}", border=1, align="R")
+        pdf.cell(col_widths[6], 5, f"{row.get('SOLD QTY', 0):,.2f}", border=1, align="R")
+        pdf.cell(col_widths[7], 5, f"{row.get('INTANS', 0):,.2f}", border=1, align="R")
+        pdf.cell(col_widths[8], 5, f"{row.get('BOOKING', 0):,.2f}", border=1, align="R")
+        pdf.cell(col_widths[9], 5, f"{row.get('SAIL BSO', 0):,.2f}", border=1, align="R")
+        pdf.cell(col_widths[10], 5, f"{row.get('BAL. QTY', 0):,.2f}", border=1, align="R")
         pdf.ln()
 
-    # Category Breakdown
-    if df_raw is not None and "CAT." in df_raw.columns:
-        pdf.ln(8)
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, f"Category Breakdown ({date_str}):", ln=True)
-
-        cat_summary = df_raw.groupby("CAT.")[["GD STOCK", "SOLD QTY", "BAL. QTY"]].sum().reset_index()
-
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_fill_color(240, 240, 240)
-        pdf.cell(45, 6, "Category", 1, 0, "L", fill=True)
-        pdf.cell(45, 6, "GD Stock", 1, 0, "R", fill=True)
-        pdf.cell(45, 6, "Sold Qty", 1, 0, "R", fill=True)
-        pdf.cell(45, 6, "Bal Qty", 1, 0, "R", fill=True)
-        pdf.ln()
-
-        pdf.set_font("Helvetica", "", 9)
-        for _, row in cat_summary.iterrows():
-            pdf.cell(45, 6, str(row["CAT."])[:20], 1)
-            pdf.cell(45, 6, f"{row['GD STOCK']:,.3f}", 1, 0, "R")
-            pdf.cell(45, 6, f"{row['SOLD QTY']:,.3f}", 1, 0, "R")
-            pdf.cell(45, 6, f"{row['BAL. QTY']:,.3f}", 1, 0, "R")
-            pdf.ln()
+    # Total Summary Row at Bottom
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_fill_color(200, 230, 200) # Highlight total row
+    
+    pdf.cell(col_widths[0] + col_widths[1] + col_widths[2] + col_widths[3], 6, "TOTAL", border=1, align="C", fill=True)
+    for col, w in zip(METRIC_COLS, col_widths[4:]):
+        pdf.cell(w, 6, f"{primary_sums.get(col, 0):,.2f}", border=1, align="R", fill=True)
+    pdf.ln()
 
     return bytes(pdf.output())
 
@@ -240,10 +275,10 @@ if uploaded_file:
 
     pdf_bytes = generate_pdf_report(
         date_str=selected_date,
-        df_summary=primary_sums,
-        df_raw=df_primary,
+        df_primary=df_primary,
+        primary_sums=primary_sums,
         compare_date_str=compare_date,
-        df_comp_summary=compare_sums
+        compare_sums=compare_sums
     )
 
     filename = f"Stock_Report_{selected_date}.pdf" if not compare_date else f"Stock_Comparison_{selected_date}_vs_{compare_date}.pdf"
