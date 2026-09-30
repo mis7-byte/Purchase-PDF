@@ -102,9 +102,42 @@ def generate_bar_chart_bytes(cat_df, date_str):
     return buf
 
 
+def generate_pie_chart_bytes(cat_df, date_str):
+    """Generates a styled pie chart matching the modern design."""
+    fig, ax = plt.subplots(figsize=(6, 3.5), dpi=200)
+    
+    valid_df = cat_df[cat_df["GD STOCK"] > 0]
+    if valid_df.empty:
+        valid_df = cat_df
+
+    wedges, texts, autotexts = ax.pie(
+        valid_df["GD STOCK"], 
+        labels=valid_df["CAT."], 
+        autopct="%1.1f%%", 
+        startangle=90, 
+        pctdistance=0.72,
+        colors=["#1A365D", "#4299E1", "#319795", "#ED8936", "#9F7AEA"],
+        textprops=dict(fontsize=8, color="#2D3748")
+    )
+
+    for autotext in autotexts:
+        autotext.set_fontweight("bold")
+        autotext.set_color("white")
+        autotext.set_fontsize(8)
+
+    ax.set_title(f"GD Stock Share by Category ({date_str})", fontsize=10, fontweight="bold", color="#1A365D", pad=12)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
 def generate_comparison_bar_chart_bytes(primary_sums, compare_sums, date_str, compare_date):
-    """Generates a comparison bar chart matching the Streamlit metric comparison chart."""
-    fig, ax = plt.subplots(figsize=(6.5, 3.5), dpi=200)
+    """Generates a wide metric comparison bar chart."""
+    fig, ax = plt.subplots(figsize=(12, 4.2), dpi=200)
     
     metrics = METRIC_COLS
     x = range(len(metrics))
@@ -117,12 +150,12 @@ def generate_comparison_bar_chart_bytes(primary_sums, compare_sums, date_str, co
     rects2 = ax.bar([i + width / 2 for i in x], vals_compare, width=width, label=compare_date, color="#83C8FF")
 
     for rects in [rects1, rects2]:
-        ax.bar_label(rects, fmt="%.1f", padding=2, fontsize=6.5, color="#2D3748", fontweight="bold")
+        ax.bar_label(rects, fmt="%.1f", padding=3, fontsize=7.5, color="#2D3748", fontweight="bold")
 
     ax.set_xticks(list(x))
-    ax.set_xticklabels(metrics, fontsize=7, color="#2D3748", fontweight="bold", rotation=15)
-    ax.set_title(f"Metric Comparison: {date_str} vs {compare_date}", fontsize=9, fontweight="bold", color="#1A365D", pad=10)
-    ax.legend(fontsize=7, loc="upper right", frameon=True, facecolor="#F8FAFC", edgecolor="none")
+    ax.set_xticklabels(metrics, fontsize=8, color="#2D3748", fontweight="bold")
+    ax.set_title(f"Metric Comparison: {date_str} vs {compare_date}", fontsize=11, fontweight="bold", color="#1A365D", pad=12)
+    ax.legend(fontsize=8, loc="upper right", frameon=True, facecolor="#F8FAFC", edgecolor="none")
 
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -299,20 +332,31 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_text_color(*PRIMARY_COLOR)
-    pdf.cell(0, 8, "Visual Analysis", ln=True)
+    pdf.cell(0, 8, "Visual Analysis - Category Breakdown", ln=True)
     pdf.ln(2)
 
     chart_y = pdf.get_y()
     img_w, img_h = 132, 75
 
+    # Always render both Category Bar Chart and Pie Chart side-by-side
     if "CAT." in df_primary.columns:
         cat_df = df_primary.groupby("CAT.")[METRIC_COLS].sum().reset_index()
         bar_buf = generate_bar_chart_bytes(cat_df, date_str)
-        pdf.image(bar_buf, x=12, y=chart_y, w=img_w, h=img_h)
+        pie_buf = generate_pie_chart_bytes(cat_df, date_str)
 
+        pdf.image(bar_buf, x=12, y=chart_y, w=img_w, h=img_h)
+        pdf.image(pie_buf, x=150, y=chart_y, w=img_w, h=img_h)
+
+    # Dynamic Comparison Chart in PDF
     if has_compare:
+        pdf.set_y(chart_y + img_h + 8)
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_text_color(*PRIMARY_COLOR)
+        pdf.cell(0, 8, f"Date Comparison Analysis ({date_str} vs {compare_date})", ln=True)
+        pdf.ln(2)
+
         comp_chart_buf = generate_comparison_bar_chart_bytes(primary_sums, compare_sums, date_str, compare_date)
-        pdf.image(comp_chart_buf, x=150, y=chart_y, w=img_w, h=img_h)
+        pdf.image(comp_chart_buf, x=12, y=pdf.get_y(), w=270, h=85)
 
     # 4. DETAILED DATA TABLE
     pdf.add_page()
