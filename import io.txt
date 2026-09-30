@@ -1,0 +1,246 @@
+import io
+import re
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+from fpdf import FPDF
+
+# --- PAGE SETUP ---
+st.set_page_config(page_title="Stock Analysis Dashboard", layout="wide")
+
+NUMERIC_COLS = [
+    "THIK", "WIDTH", "GD STOCK", "COIL", 
+    "SOLD QTY", "INTANS", "BOOKING", "SAIL BSO", "BAL. QTY"
+]
+METRIC_COLS = [
+    "GD STOCK", "COIL", "SOLD QTY", 
+    "INTANS", "BOOKING", "SAIL BSO", "BAL. QTY"
+]
+
+
+# --- HELPER FUNCTIONS ---
+def parse_sheet_data(uploaded_file, sheet_name):
+    """Parses a specific date tab starting from row index 1 (2nd row header)."""
+    df = pd.read_excel(uploaded_file, sheet_name=sheet_name, header=1)
+    
+    # Standardize column headers
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    
+    # Drop rows without SR.NO. or completely empty
+    df = df.dropna(how="all")
+    if "SR.NO." in df.columns:
+        df = df[df["SR.NO."].notna()]
+
+    # Convert numeric columns safely
+    for col in NUMERIC_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        else:
+            df[col] = 0.0
+
+    return df
+
+
+def generate_pdf_report(date_str, df_summary, df_raw=None, compare_date_str=None, df_comp_summary=None):
+    """Generates a downloadable PDF report for a single date or comparison."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    
+    # Title
+    if compare_date_str:
+        pdf.cell(0, 10, f"Stock Comparison Report: {date_str} vs {compare_date_str}", ln=True, align="C")
+    else:
+        pdf.cell(0, 10, f"Daily Stock Summary Report - {date_str}", ln=True, align="C")
+        
+    pdf.ln(5)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Key Metric Totals:", ln=True)
+    pdf.set_font("Helvetica", "", 10)
+
+    # Metrics Summary Table
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(60, 7, "Metric", 1, 0, "C", fill=True)
+    pdf.cell(60, 7, f"Date: {date_str}", 1, 0, "C", fill=True)
+    if compare_date_str:
+        pdf.cell(60, 7, f"Date: {compare_date_str}", 1, 0, "C", fill=True)
+    pdf.ln()
+
+    for col in METRIC_COLS:
+        val1 = df_summary.get(col, 0)
+        pdf.cell(60, 6, col, 1)
+        pdf.cell(60, 6, f"{val1:,.2f}", 1, 0, "R")
+        if compare_date_str and df_comp_summary is not None:
+            val2 = df_comp_summary.get(col, 0)
+            pdf.cell(60, 6, f"{val2:,.2f}", 1, 0, "R")
+        pdf.ln()
+
+    # Category Breakdown Summary
+    if df_raw is not None and "CAT." in df_raw.columns:
+        pdf.ln(8)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, f"Category Breakdown ({date_str}):", ln=True)
+        
+        cat_summary = df_raw.groupby("CAT.")[["GD STOCK", "SOLD QTY", "BAL. QTY"]].sum().reset_index()
+        
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(240, 240, 240)
+        pdf.cell(45, 6, "Category", 1, 0, "L", fill=True)
+        pdf.cell(45, 6, "GD Stock", 1, 0, "R", fill=True)
+        pdf.cell(45, 6, "Sold Qty", 1, 0, "R", fill=True)
+        pdf.cell(45, 6, "Bal Qty", 1, 0, "R", fill=True)
+        pdf.ln()
+
+        pdf.set_font("Helvetica", "", 9)
+        for _, row in cat_summary.iterrows():
+            pdf.cell(45, 6, str(row["CAT."])[:20], 1)
+            pdf.cell(45, 6, f"{row['GD STOCK']:,.2f}", 1, 0, "R")
+            pdf.cell(45, 6, f"{row['SOLD QTY']:,.2f}", 1, 0, "R")
+            pdf.cell(45, 6, f"{row['BAL. QTY']:,.2f}", 1, 0, "R")
+            pdf.ln()
+
+    return bytes(pdf.output())
+
+
+# --- MAIN APP LAYOUT ---
+st.title("📊 Inventory & Stock Analytics Dashboard")
+
+uploaded_file = st.sidebar.file_uploader("Upload Daily Stock Excel File", type=["xlsx", "xls"])
+
+if uploaded_file:
+    xls = pd.ExcelFile(uploaded_file)
+    all_sheets = xls.sheet_names
+
+    # Filter sheets matching DD.MM.YYYY format
+    date_sheets = [s for s in all_sheets if re.match(r"^\d{2}\.\d{2}\.\d{4}$", s.strip())]
+
+    if not date_sheets:
+        st.error("No tabs found matching the date format 'DD.MM.YYYY' (e.g., 26.09.2026). Please check sheet tab names.")
+        st.stop()
+
+    # Sidebar Date Selectors
+    selected_date = st.sidebar.selectbox("Select Primary Date", date_sheets)
+    enable_compare = st.sidebar.checkbox("Compare with another date")
+    
+    compare_date = None
+    if enable_compare:
+        remaining_dates = [d for d in date_sheets if d != selected_date]
+        if remaining_dates:
+            compare_date = st.sidebar.selectbox("Select Comparison Date", remaining_dates)
+        else:
+            st.sidebar.warning("Add more date tabs to compare.")
+
+    # Load Primary Data
+    df_primary = parse_sheet_data(uploaded_file, selected_date)
+    primary_sums = df_primary[METRIC_COLS].sum()
+
+    # Load Comparison Data if enabled
+    df_compare = None
+    compare_sums = None
+    if compare_date:
+        df_compare = parse_sheet_data(uploaded_file, compare_date)
+        compare_sums = df_compare[METRIC_COLS].sum()
+
+    # --- KPI HEADER ---
+    st.header(f"📌 Key Metrics Overview: {selected_date}")
+    
+    cols = st.columns(4)
+    for idx, metric in enumerate(["GD STOCK", "SOLD QTY", "BOOKING", "BAL. QTY"]):
+        with cols[idx % 4]:
+            val = primary_sums[metric]
+            delta_val = None
+            if compare_sums is not None:
+                diff = val - compare_sums[metric]
+                delta_val = f"{diff:+,.2f} vs {compare_date}"
+            st.metric(label=metric, value=f"{val:,.2f}", delta=delta_val)
+
+    # Total Sums Grid
+    with st.expander("🔢 Complete Metric Totals Summary"):
+        summary_data = {"Metric": METRIC_COLS, f"{selected_date} Total": [primary_sums[m] for m in METRIC_COLS]}
+        if compare_sums is not None:
+            summary_data[f"{compare_date} Total"] = [compare_sums[m] for m in METRIC_COLS]
+            summary_data["Difference"] = [primary_sums[m] - compare_sums[m] for m in METRIC_COLS]
+        
+        st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
+
+    # --- CHARTS SECTION ---
+    st.markdown("---")
+    st.header("📈 Visual Analysis")
+
+    chart_tab1, chart_tab2 = st.tabs(["Category Breakdown", "Date Comparison"])
+
+    with chart_tab1:
+        if "CAT." in df_primary.columns:
+            cat_df = df_primary.groupby("CAT.")[METRIC_COLS].sum().reset_index()
+            
+            col_left, col_right = st.columns(2)
+            with col_left:
+                fig_bar = px.bar(
+                    cat_df, x="CAT.", y=["GD STOCK", "SOLD QTY", "BAL. QTY"],
+                    barmode="group", title=f"Stock Distribution by Category ({selected_date})"
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+            with col_right:
+                fig_pie = px.pie(
+                    cat_df, names="CAT.", values="GD STOCK",
+                    title=f"GD Stock Share by Category ({selected_date})"
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.warning("Column 'CAT.' not found in data.")
+
+    with chart_tab2:
+        if compare_sums is not None:
+            comp_df = pd.DataFrame({
+                "Metric": METRIC_COLS,
+                selected_date: primary_sums.values,
+                compare_date: compare_sums.values
+            }).melt(id_vars="Metric", var_name="Date", value_name="Total Quantity")
+
+            fig_comp = px.bar(
+                comp_df, x="Metric", y="Total Quantity", color="Date",
+                barmode="group", title=f"Metric Comparison: {selected_date} vs {compare_date}"
+            )
+            st.plotly_chart(fig_comp, use_container_width=True)
+        else:
+            st.info("Enable 'Compare with another date' in the sidebar to view comparison charts.")
+
+    # --- DATA TABLE VIEW ---
+    st.markdown("---")
+    st.header(f"📄 Detailed Data Table ({selected_date})")
+    
+    # Append Total row at the bottom of data display
+    df_display = df_primary.copy()
+    total_row = {col: "" for col in df_display.columns}
+    total_row["SR.NO."] = "TOTAL"
+    for col in METRIC_COLS:
+        total_row[col] = primary_sums[col]
+    
+    df_display = pd.concat([df_display, pd.DataFrame([total_row])], ignore_index=True)
+    st.dataframe(df_display, use_container_width=True)
+
+    # --- PDF EXPORT SECTION ---
+    st.markdown("---")
+    st.header("📥 Export Report")
+
+    pdf_bytes = generate_pdf_report(
+        date_str=selected_date,
+        df_summary=primary_sums,
+        df_raw=df_primary,
+        compare_date_str=compare_date,
+        df_comp_summary=compare_sums
+    )
+
+    filename = f"Stock_Report_{selected_date}.pdf" if not compare_date else f"Stock_Comparison_{selected_date}_vs_{compare_date}.pdf"
+
+    st.download_button(
+        label="📄 Download PDF Report",
+        data=pdf_bytes,
+        file_name=filename,
+        mime="application/pdf"
+    )
+
+else:
+    st.info("👈 Please upload your stock Excel file from the sidebar to begin.")
