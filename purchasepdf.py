@@ -1,9 +1,8 @@
 import io
 import re
 import pandas as pd
+import matplotlib.pyplot as plt
 import plotly.express as px
-import plotly.graph_objects as go
-import plotly.io as pio
 import streamlit as st
 from fpdf import FPDF
 
@@ -51,6 +50,58 @@ def parse_sheet_data(uploaded_file, sheet_name):
     return df
 
 
+def generate_bar_chart_bytes(cat_df, date_str):
+    """Generates a PNG image stream of the category bar chart using Matplotlib."""
+    fig, ax = plt.subplots(figsize=(6, 3.2), dpi=200)
+    
+    categories = cat_df["CAT."].astype(str).tolist()
+    x = range(len(categories))
+    width = 0.25
+
+    ax.bar([i - width for i in x], cat_df["GD STOCK"], width=width, label="GD STOCK", color="#1f77b4")
+    ax.bar(x, cat_df["SOLD QTY"], width=width, label="SOLD QTY", color="#aec7e8")
+    ax.bar([i + width for i in x], cat_df["BAL. QTY"], width=width, label="BAL. QTY", color="#d62728")
+
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(categories, fontsize=8)
+    ax.set_title(f"Stock Distribution by Category ({date_str})", fontsize=10, fontweight="bold")
+    ax.legend(fontsize=7)
+    ax.grid(axis="y", linestyle="--", alpha=0.5)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+def generate_pie_chart_bytes(cat_df, date_str):
+    """Generates a PNG image stream of the pie chart using Matplotlib."""
+    fig, ax = plt.subplots(figsize=(6, 3.2), dpi=200)
+    
+    # Filter non-zero values for cleaner pie chart rendering
+    valid_df = cat_df[cat_df["GD STOCK"] > 0]
+    if valid_df.empty:
+        valid_df = cat_df
+
+    ax.pie(
+        valid_df["GD STOCK"], 
+        labels=valid_df["CAT."], 
+        autopct="%1.1f%%", 
+        startangle=90, 
+        colors=["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c"]
+    )
+    ax.set_title(f"GD Stock Share by Category ({date_str})", fontsize=10, fontweight="bold")
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
 class AppPDF(FPDF):
     def header(self):
         pass
@@ -61,25 +112,25 @@ class AppPDF(FPDF):
         self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
 
-def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, compare_sums=None, fig_bar=None, fig_pie=None):
-    """Generates a PDF styled directly after the Streamlit App layout sequence."""
+def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, compare_sums=None):
+    """Generates a PDF matching the exact order and structure of the dashboard UI."""
     pdf = AppPDF(orientation="L", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
 
-    # Title Banner
+    # Dashboard Banner
     pdf.set_font("Helvetica", "B", 18)
     pdf.cell(0, 10, f"Dashboard Overview - {date_str}", ln=True, align="L")
     pdf.ln(2)
 
     # ---------------------------------------------------------
-    # 1. KEY METRICS OVERVIEW & ORDERS & MOVEMENTS (KPI CARDS)
+    # 1. KEY METRICS OVERVIEW & ORDERS & MOVEMENTS
     # ---------------------------------------------------------
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 6, f"Key Metrics Overview: {date_str}", ln=True)
     pdf.ln(2)
 
-    # Core Stock Cards Row
+    # Core Stock Cards
     row1_metrics = [
         ("GD STOCK", primary_sums.get("GD STOCK", 0)),
         ("SOLD QTY", primary_sums.get("SOLD QTY", 0)),
@@ -88,7 +139,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     ]
 
     card_w = 65
-    card_h = 16
+    card_h = 15
     start_x = 10
     start_y = pdf.get_y()
 
@@ -99,12 +150,12 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
         pdf.set_font("Helvetica", "", 8)
         pdf.cell(card_w, 4, label, align="C")
         pdf.set_xy(x, start_y + 7)
-        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_font("Helvetica", "B", 11)
         pdf.cell(card_w, 6, f"{val:,.3f}", align="C")
 
-    pdf.set_y(start_y + card_h + 5)
+    pdf.set_y(start_y + card_h + 4)
 
-    # Orders & Movements Row
+    # Orders & Movements
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 6, "Orders & Movements", ln=True)
     pdf.ln(2)
@@ -124,13 +175,13 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
         pdf.set_font("Helvetica", "", 8)
         pdf.cell(card_w_r2, 4, label, align="C")
         pdf.set_xy(x, start_y + 7)
-        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_font("Helvetica", "B", 11)
         pdf.cell(card_w_r2, 6, f"{val:,.3f}", align="C")
 
     pdf.set_y(start_y + card_h + 6)
 
     # ---------------------------------------------------------
-    # 2. METRICS SUMMARY TABLE (FULL METRICS DETAIL SECTION)
+    # 2. FULL METRICS SUMMARY TABLE
     # ---------------------------------------------------------
     pdf.set_font("Helvetica", "B", 11)
     pdf.cell(0, 6, "Full Metrics Summary Table", ln=True)
@@ -138,7 +189,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
 
     has_compare = compare_sums is not None
     sum_cols = ["Metric", f"{date_str} Total"]
-    sum_widths = [100, 100]
+    sum_widths = [135, 135]
     if has_compare:
         sum_cols = ["Metric", f"{date_str} Total", f"{compare_date} Total", "Difference"]
         sum_widths = [70, 70, 70, 60]
@@ -162,42 +213,29 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
             pdf.cell(sum_widths[3], 5, f"{p_val - c_val:+,.3f}", border=1, align="R")
         pdf.ln()
 
-    pdf.ln(4)
-
     # ---------------------------------------------------------
-    # 3. VISUAL ANALYSIS (GRAPHS)
+    # 3. VISUAL ANALYSIS (CHARTS)
     # ---------------------------------------------------------
-    # Move charts to next page if vertical space is limited
-    if pdf.get_y() > 120:
-        pdf.add_page()
-
+    pdf.add_page()
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 8, "Visual Analysis", ln=True)
     pdf.ln(2)
 
-    chart_y = pdf.get_y()
-    img_w, img_h = 130, 65
+    if "CAT." in df_primary.columns:
+        cat_df = df_primary.groupby("CAT.")[METRIC_COLS].sum().reset_index()
+        
+        # Render charts directly using matplotlib to memory streams
+        bar_buf = generate_bar_chart_bytes(cat_df, date_str)
+        pie_buf = generate_pie_chart_bytes(cat_df, date_str)
 
-    # Render Bar Chart Image
-    if fig_bar is not None:
-        try:
-            bar_bytes = pio.to_image(fig_bar, format="png", width=600, height=300)
-            bar_stream = io.BytesIO(bar_bytes)
-            pdf.image(bar_stream, x=10, y=chart_y, w=img_w, h=img_h)
-        except Exception:
-            pdf.rect(10, chart_y, img_w, img_h)
+        chart_y = pdf.get_y()
+        img_w, img_h = 130, 70
 
-    # Render Pie Chart Image
-    if fig_pie is not None:
-        try:
-            pie_bytes = pio.to_image(fig_pie, format="png", width=600, height=300)
-            pie_stream = io.BytesIO(pie_bytes)
-            pdf.image(pie_stream, x=145, y=chart_y, w=img_w, h=img_h)
-        except Exception:
-            pdf.rect(145, chart_y, img_w, img_h)
+        pdf.image(bar_buf, x=10, y=chart_y, w=img_w, h=img_h)
+        pdf.image(pie_buf, x=145, y=chart_y, w=img_w, h=img_h)
 
     # ---------------------------------------------------------
-    # 4. DETAILED DATA TABLE (FULL STOCK ITEMIZATION)
+    # 4. DETAILED DATA TABLE
     # ---------------------------------------------------------
     pdf.add_page()
 
@@ -326,9 +364,6 @@ if uploaded_file:
 
     chart_tab1, chart_tab2 = st.tabs(["Category Breakdown", "Date Comparison"])
 
-    fig_bar = None
-    fig_pie = None
-
     with chart_tab1:
         if "CAT." in df_primary.columns:
             cat_df = df_primary.groupby("CAT.")[METRIC_COLS].sum().reset_index()
@@ -388,9 +423,7 @@ if uploaded_file:
         df_primary=df_primary,
         primary_sums=primary_sums,
         compare_date=compare_date,
-        compare_sums=compare_sums,
-        fig_bar=fig_bar,
-        fig_pie=fig_pie
+        compare_sums=compare_sums
     )
 
     filename = f"Stock_Report_{selected_date}.pdf" if not compare_date else f"Stock_Comparison_{selected_date}_vs_{compare_date}.pdf"
