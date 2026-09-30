@@ -51,22 +51,37 @@ def parse_sheet_data(uploaded_file, sheet_name):
 
 
 def generate_bar_chart_bytes(cat_df, date_str):
-    """Generates a PNG image stream of the category bar chart using Matplotlib."""
-    fig, ax = plt.subplots(figsize=(6, 3.2), dpi=200)
+    """Generates a clean bar chart with data labels above bars using Matplotlib."""
+    fig, ax = plt.subplots(figsize=(6, 3.5), dpi=200)
     
     categories = cat_df["CAT."].astype(str).tolist()
     x = range(len(categories))
     width = 0.25
 
-    ax.bar([i - width for i in x], cat_df["GD STOCK"], width=width, label="GD STOCK", color="#1f77b4")
-    ax.bar(x, cat_df["SOLD QTY"], width=width, label="SOLD QTY", color="#aec7e8")
-    ax.bar([i + width for i in x], cat_df["BAL. QTY"], width=width, label="BAL. QTY", color="#d62728")
+    # Plot bars
+    rects1 = ax.bar([i - width for i in x], cat_df["GD STOCK"], width=width, label="GD STOCK", color="#1f77b4")
+    rects2 = ax.bar(x, cat_df["SOLD QTY"], width=width, label="SOLD QTY", color="#aec7e8")
+    rects3 = ax.bar([i + width for i in x], cat_df["BAL. QTY"], width=width, label="BAL. QTY", color="#d62728")
 
+    # Add data labels on top of each bar
+    for rects in [rects1, rects2, rects3]:
+        ax.bar_label(rects, fmt="%.1f", padding=3, fontsize=7, rotation=0)
+
+    # Styling & Clean Aesthetics
     ax.set_xticks(list(x))
     ax.set_xticklabels(categories, fontsize=8)
-    ax.set_title(f"Stock Distribution by Category ({date_str})", fontsize=10, fontweight="bold")
-    ax.legend(fontsize=7)
-    ax.grid(axis="y", linestyle="--", alpha=0.5)
+    ax.set_title(f"Stock Distribution by Category ({date_str})", fontsize=10, fontweight="bold", pad=12)
+    ax.legend(fontsize=7, loc="upper left")
+    
+    # Hide top and right spines
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+    # Add y-axis headroom so labels aren't cut off at the top
+    max_val = max(cat_df[["GD STOCK", "SOLD QTY", "BAL. QTY"]].max().max(), 1)
+    ax.set_ylim(0, max_val * 1.18)
+
     plt.tight_layout()
 
     buf = io.BytesIO()
@@ -77,22 +92,28 @@ def generate_bar_chart_bytes(cat_df, date_str):
 
 
 def generate_pie_chart_bytes(cat_df, date_str):
-    """Generates a PNG image stream of the pie chart using Matplotlib."""
-    fig, ax = plt.subplots(figsize=(6, 3.2), dpi=200)
+    """Generates a clean pie chart with percentages and category labels."""
+    fig, ax = plt.subplots(figsize=(6, 3.5), dpi=200)
     
-    # Filter non-zero values for cleaner pie chart rendering
     valid_df = cat_df[cat_df["GD STOCK"] > 0]
     if valid_df.empty:
         valid_df = cat_df
 
-    ax.pie(
+    wedges, texts, autotexts = ax.pie(
         valid_df["GD STOCK"], 
         labels=valid_df["CAT."], 
         autopct="%1.1f%%", 
         startangle=90, 
-        colors=["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c"]
+        pctdistance=0.75,
+        colors=["#1f77b4", "#aec7e8", "#ff7f0e", "#ffbb78", "#2ca02c"],
+        textprops=dict(fontsize=8)
     )
-    ax.set_title(f"GD Stock Share by Category ({date_str})", fontsize=10, fontweight="bold")
+
+    for autotext in autotexts:
+        autotext.set_fontweight("bold")
+        autotext.set_fontsize(8)
+
+    ax.set_title(f"GD Stock Share by Category ({date_str})", fontsize=10, fontweight="bold", pad=12)
     plt.tight_layout()
 
     buf = io.BytesIO()
@@ -113,7 +134,7 @@ class AppPDF(FPDF):
 
 
 def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, compare_sums=None):
-    """Generates a PDF matching the exact order and structure of the dashboard UI."""
+    """Generates a multi-page PDF report matching dashboard layouts cleanly."""
     pdf = AppPDF(orientation="L", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
@@ -214,7 +235,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
         pdf.ln()
 
     # ---------------------------------------------------------
-    # 3. VISUAL ANALYSIS (CHARTS)
+    # 3. VISUAL ANALYSIS (CHARTS PAGE)
     # ---------------------------------------------------------
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 14)
@@ -224,12 +245,12 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     if "CAT." in df_primary.columns:
         cat_df = df_primary.groupby("CAT.")[METRIC_COLS].sum().reset_index()
         
-        # Render charts directly using matplotlib to memory streams
+        # Generate chart images with data labels
         bar_buf = generate_bar_chart_bytes(cat_df, date_str)
         pie_buf = generate_pie_chart_bytes(cat_df, date_str)
 
         chart_y = pdf.get_y()
-        img_w, img_h = 130, 70
+        img_w, img_h = 130, 75
 
         pdf.image(bar_buf, x=10, y=chart_y, w=img_w, h=img_h)
         pdf.image(pie_buf, x=145, y=chart_y, w=img_w, h=img_h)
@@ -372,8 +393,10 @@ if uploaded_file:
             with col_left:
                 fig_bar = px.bar(
                     cat_df, x="CAT.", y=["GD STOCK", "SOLD QTY", "BAL. QTY"],
-                    barmode="group", title=f"Stock Distribution by Category ({selected_date})"
+                    barmode="group", title=f"Stock Distribution by Category ({selected_date})",
+                    text_auto=".1f"  # Adds data labels to Plotly interactive view
                 )
+                fig_bar.update_traces(textposition="outside")
                 st.plotly_chart(fig_bar, use_container_width=True)
 
             with col_right:
@@ -381,6 +404,7 @@ if uploaded_file:
                     cat_df, names="CAT.", values="GD STOCK",
                     title=f"GD Stock Share by Category ({selected_date})"
                 )
+                fig_pie.update_traces(textinfo="percent+label")
                 st.plotly_chart(fig_pie, use_container_width=True)
         else:
             st.warning("Column 'CAT.' not found in data.")
@@ -395,8 +419,10 @@ if uploaded_file:
 
             fig_comp = px.bar(
                 comp_df, x="Metric", y="Total Quantity", color="Date",
-                barmode="group", title=f"Metric Comparison: {selected_date} vs {compare_date}"
+                barmode="group", title=f"Metric Comparison: {selected_date} vs {compare_date}",
+                text_auto=".1f"
             )
+            fig_comp.update_traces(textposition="outside")
             st.plotly_chart(fig_comp, use_container_width=True)
         else:
             st.info("Enable 'Compare with another date' in the sidebar to view comparison charts.")
