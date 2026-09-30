@@ -149,14 +149,14 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
 
-    # Header Banner (Fixed style parameter)
+    # Header Banner (Centered Title across full 297mm width)
     pdf.set_fill_color(*PRIMARY_COLOR)
     pdf.rect(0, 0, 297, 22, style="F")
     
-    pdf.set_xy(12, 6)
+    pdf.set_xy(0, 6)
     pdf.set_font("Helvetica", "B", 16)
     pdf.set_text_color(255, 255, 255)
-    pdf.cell(0, 10, f"Dashboard Overview - {date_str}", align="L")
+    pdf.cell(297, 10, f"Dashboard Overview - {date_str}", align="C")
     
     pdf.set_y(28)
 
