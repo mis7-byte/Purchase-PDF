@@ -3,6 +3,7 @@ import re
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
 from fpdf import FPDF
 
@@ -50,77 +51,136 @@ def parse_sheet_data(uploaded_file, sheet_name):
     return df
 
 
-def generate_pdf_report(date_str, df_primary, primary_sums, compare_date_str=None, compare_sums=None):
-    """Generates a PDF styled exactly like the Streamlit App layout."""
-    pdf = FPDF(orientation="L", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=10)
-    pdf.add_page()
-    
-    # --- PAGE TITLE ---
-    pdf.set_font("Helvetica", "B", 16)
-    title_text = f"Stock Summary Report - {date_str}" if not compare_date_str else f"Stock Comparison Report: {date_str} vs {compare_date_str}"
-    pdf.cell(0, 10, title_text, ln=True, align="C")
-    pdf.ln(3)
+class AppPDF(FPDF):
+    def header(self):
+        pass
 
-    # --- SECTION 1: KEY METRICS OVERVIEW (App KPI Cards Layout) ---
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 7, "Key Metrics Overview", ln=True)
+    def footer(self):
+        self.set_y(-10)
+        self.set_font("Helvetica", "I", 8)
+        self.cell(0, 10, f"Page {self.page_no()}", align="C")
+
+
+def generate_pdf_report(date_str, df_primary, primary_sums, fig_bar=None, fig_pie=None):
+    """Generates a PDF styled directly after the Streamlit App layout."""
+    pdf = AppPDF(orientation="L", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+
+    # Title Banner
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(0, 10, f"Dashboard Overview - {date_str}", ln=True, align="L")
     pdf.ln(2)
 
-    # KPI Card Layout
-    kpi_list = [
+    # --- SECTION 1: KEY METRICS OVERVIEW ---
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 6, f"Key Metrics Overview: {date_str}", ln=True)
+    pdf.ln(2)
+
+    # Core Stock Cards Row
+    row1_metrics = [
         ("GD STOCK", primary_sums.get("GD STOCK", 0)),
         ("SOLD QTY", primary_sums.get("SOLD QTY", 0)),
         ("INTANS", primary_sums.get("INTANS", 0)),
         ("BAL. QTY", primary_sums.get("BAL. QTY", 0)),
-        ("TOTAL COIL", primary_sums.get("COIL", 0)),
-        ("TOTAL BOOKING", primary_sums.get("BOOKING", 0)),
-        ("TOTAL SAIL BSO", primary_sums.get("SAIL BSO", 0))
     ]
 
-    card_w = 38
+    card_w = 65
     card_h = 16
+    start_x = 10
+    start_y = pdf.get_y()
 
-    for idx, (label, val) in enumerate(kpi_list):
-        if idx > 0 and idx % 7 == 0:
-            pdf.ln(card_h + 3)
-        
-        x_pos = 10 + (idx % 7) * (card_w + 1)
-        y_pos = pdf.get_y()
-        
-        # Draw Card Box
-        pdf.rect(x_pos, y_pos, card_w, card_h)
-        
-        # Card Label
-        pdf.set_xy(x_pos, y_pos + 2)
-        pdf.set_font("Helvetica", "B", 7)
+    for idx, (label, val) in enumerate(row1_metrics):
+        x = start_x + idx * (card_w + 3)
+        pdf.rect(x, start_y, card_w, card_h)
+        pdf.set_xy(x, start_y + 2)
+        pdf.set_font("Helvetica", "", 8)
         pdf.cell(card_w, 4, label, align="C")
-        
-        # Card Value
-        pdf.set_xy(x_pos, y_pos + 7)
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(card_w, 6, f"{val:,.2f}", align="C")
+        pdf.set_xy(x, start_y + 7)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(card_w, 6, f"{val:,.3f}", align="C")
 
-    pdf.set_y(pdf.get_y() + card_h + 6)
+    pdf.set_y(start_y + card_h + 5)
 
-    # --- SECTION 2: DETAILED DATA TABLE ---
+    # Orders & Movements Row
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 7, f"Detailed Data Table ({date_str})", ln=True)
+    pdf.cell(0, 6, "Orders & Movements", ln=True)
     pdf.ln(2)
+
+    row2_metrics = [
+        ("TOTAL COIL", primary_sums.get("COIL", 0)),
+        ("TOTAL BOOKING", primary_sums.get("BOOKING", 0)),
+        ("TOTAL SAIL BSO", primary_sums.get("SAIL BSO", 0)),
+    ]
+
+    start_y = pdf.get_y()
+    card_w_r2 = 87
+    for idx, (label, val) in enumerate(row2_metrics):
+        x = start_x + idx * (card_w_r2 + 4)
+        pdf.rect(x, start_y, card_w_r2, card_h)
+        pdf.set_xy(x, start_y + 2)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(card_w_r2, 4, label, align="C")
+        pdf.set_xy(x, start_y + 7)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(card_w_r2, 6, f"{val:,.3f}", align="C")
+
+    pdf.set_y(start_y + card_h + 8)
+
+    # --- SECTION 2: VISUAL ANALYSIS (CHARTS) ---
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 8, "Visual Analysis", ln=True)
+    pdf.ln(2)
+
+    chart_y = pdf.get_y()
+    img_w, img_h = 130, 65
+
+    # Render Bar Chart Image
+    if fig_bar is not None:
+        try:
+            bar_bytes = pio.to_image(fig_bar, format="png", width=600, height=300)
+            bar_stream = io.BytesIO(bar_bytes)
+            pdf.image(bar_stream, x=10, y=chart_y, w=img_w, h=img_h)
+        except Exception:
+            pdf.rect(10, chart_y, img_w, img_h)
+
+    # Render Pie Chart Image
+    if fig_pie is not None:
+        try:
+            pie_bytes = pio.to_image(fig_pie, format="png", width=600, height=300)
+            pie_stream = io.BytesIO(pie_bytes)
+            pdf.image(pie_stream, x=145, y=chart_y, w=img_w, h=img_h)
+        except Exception:
+            pdf.rect(145, chart_y, img_w, img_h)
+
+    # Move to Next Page for Detailed Table
+    pdf.add_page()
+
+    # --- SECTION 3: DETAILED DATA TABLE ---
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 8, f"Detailed Data Table ({date_str})", ln=True)
+    pdf.ln(3)
 
     table_cols = ["SR.NO.", "CAT.", "THIK", "WIDTH", "GD STOCK", "COIL", "SOLD QTY", "INTANS", "BOOKING", "SAIL BSO", "BAL. QTY"]
     col_widths = [14, 20, 16, 18, 25, 20, 25, 22, 22, 22, 28]
 
-    # Header Row
-    pdf.set_font("Helvetica", "B", 8)
-    pdf.set_fill_color(230, 230, 230)
-    for col, w in zip(table_cols, col_widths):
-        pdf.cell(w, 6, col, border=1, align="C", fill=True)
-    pdf.ln()
+    # Function to draw table header
+    def draw_table_header():
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(230, 230, 230)
+        for col, w in zip(table_cols, col_widths):
+            pdf.cell(w, 6, col, border=1, align="C", fill=True)
+        pdf.ln()
+
+    draw_table_header()
 
     # Data Rows
     pdf.set_font("Helvetica", "", 8)
     for _, row in df_primary.iterrows():
+        if pdf.get_y() > 180:
+            pdf.add_page()
+            draw_table_header()
+
         pdf.cell(col_widths[0], 5, str(int(row["SR.NO."])) if pd.notna(row.get("SR.NO.")) else "", border=1, align="C")
         pdf.cell(col_widths[1], 5, str(row.get("CAT.", ""))[:12], border=1, align="L")
         pdf.cell(col_widths[2], 5, str(row.get("THIK", "")), border=1, align="C")
@@ -135,9 +195,13 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date_str=Non
         pdf.ln()
 
     # Total Summary Row at Bottom
+    if pdf.get_y() > 180:
+        pdf.add_page()
+        draw_table_header()
+
     pdf.set_font("Helvetica", "B", 8)
-    pdf.set_fill_color(200, 230, 200) # Highlight total row
-    
+    pdf.set_fill_color(200, 230, 200)
+
     pdf.cell(col_widths[0] + col_widths[1] + col_widths[2] + col_widths[3], 6, "TOTAL", border=1, align="C", fill=True)
     for col, w in zip(METRIC_COLS, col_widths[4:]):
         pdf.cell(w, 6, f"{primary_sums.get(col, 0):,.2f}", border=1, align="R", fill=True)
@@ -195,7 +259,7 @@ if uploaded_file:
             st.metric(label=metric, value=f"{val:,.3f}", delta=delta_val)
 
     st.markdown("### 📦 Orders & Movements")
-    
+
     # Row 2: Coil, Booking, Sail BSO Sums
     r2_col1, r2_col2, r2_col3 = st.columns(3)
     for col_widget, metric in zip([r2_col1, r2_col2, r2_col3], ["COIL", "BOOKING", "SAIL BSO"]):
@@ -218,6 +282,9 @@ if uploaded_file:
     st.header("📈 Visual Analysis")
 
     chart_tab1, chart_tab2 = st.tabs(["Category Breakdown", "Date Comparison"])
+
+    fig_bar = None
+    fig_pie = None
 
     with chart_tab1:
         if "CAT." in df_primary.columns:
@@ -277,8 +344,8 @@ if uploaded_file:
         date_str=selected_date,
         df_primary=df_primary,
         primary_sums=primary_sums,
-        compare_date_str=compare_date,
-        compare_sums=compare_sums
+        fig_bar=fig_bar,
+        fig_pie=fig_pie
     )
 
     filename = f"Stock_Report_{selected_date}.pdf" if not compare_date else f"Stock_Comparison_{selected_date}_vs_{compare_date}.pdf"
