@@ -61,17 +61,14 @@ def parse_sheet_data(uploaded_file, sheet_name):
 # --- HELPER FUNCTIONS FOR MATERIAL STATUS TAB ---
 def parse_material_status_sheet(uploaded_file, sheet_name):
     """Parses the 'Material Status' sheet."""
-    # Row 1 contains the report date
     header_df = pd.read_excel(uploaded_file, sheet_name=sheet_name, nrows=1, header=None)
     report_date = str(header_df.iloc[0, 4]).strip() if header_df.shape[1] > 4 and pd.notna(header_df.iloc[0, 4]) else "N/A"
     if report_date == "N/A":
-        # Fallback to search first row for date string
         for val in header_df.values.flatten():
             if pd.notna(val) and re.search(r"\d{2}\.\d{2}\.\d{4}", str(val)):
                 report_date = str(val).strip()
                 break
 
-    # Row 2 contains headers: CATEGORY, THIK, SIZE, GRADE, QTY, FROM, STATUS, Expected Date
     df = pd.read_excel(uploaded_file, sheet_name=sheet_name, header=1)
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.dropna(how="all")
@@ -79,7 +76,6 @@ def parse_material_status_sheet(uploaded_file, sheet_name):
     if "QTY" in df.columns:
         df["QTY"] = pd.to_numeric(df["QTY"], errors="coerce").fillna(0.0)
 
-    # Clean text columns
     for col in ["CATEGORY", "FROM", "STATUS", "GRADE"]:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip().str.upper()
@@ -147,6 +143,44 @@ def generate_pie_chart_bytes(cat_df, date_str):
     ax.set_title(f"GD Stock Share by Category ({date_str})", fontsize=10, fontweight="bold", color="#1A365D", pad=12)
     plt.tight_layout()
 
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+def generate_comparison_bar_chart_bytes(primary_sums, compare_sums, date_str, compare_date):
+    """Generates the side-by-side metric comparison bar chart for PDF."""
+    fig, ax = plt.subplots(figsize=(10, 4.2), dpi=200)
+    metrics = METRIC_COLS
+    x = list(range(len(metrics)))
+    width = 0.38
+
+    p_vals = [primary_sums.get(m, 0.0) for m in metrics]
+    c_vals = [compare_sums.get(m, 0.0) for m in metrics]
+
+    rects1 = ax.bar([i - width/2 for i in x], p_vals, width=width, label=date_str, color="#0066CC")
+    rects2 = ax.bar([i + width/2 for i in x], c_vals, width=width, label=compare_date, color="#80C1FF")
+
+    ax.bar_label(rects1, fmt="%.1f", padding=3, fontsize=7, color="#1A365D", fontweight="bold")
+    ax.bar_label(rects2, fmt="%.1f", padding=3, fontsize=7, color="#1A365D", fontweight="bold")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(metrics, fontsize=8, color="#2D3748", fontweight="bold")
+    ax.set_title(f"Metric Comparison: {date_str} vs {compare_date}", fontsize=11, fontweight="bold", color="#1A365D", pad=12)
+    ax.legend(fontsize=8, loc="upper right", frameon=True, facecolor="#F8FAFC", edgecolor="none")
+
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#CBD5E0")
+    ax.spines["bottom"].set_color("#CBD5E0")
+    ax.grid(axis="y", linestyle="--", alpha=0.4, color="#CBD5E0")
+
+    max_val = max(max(p_vals, default=1), max(c_vals, default=1))
+    ax.set_ylim(0, max_val * 1.18)
+
+    plt.tight_layout()
     buf = io.BytesIO()
     plt.savefig(buf, format="png", bbox_inches="tight")
     plt.close(fig)
@@ -254,7 +288,7 @@ def draw_metric_card(pdf, x, y, width, height, label, val, diff=None, compare_da
 
 
 def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, compare_sums=None):
-    """Generates PDF report for Daily Stock sheet."""
+    """Generates PDF report for Daily Stock sheet with Comparison Visuals."""
     pdf = AppPDF(orientation="L", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
@@ -344,7 +378,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
             pdf.cell(sum_widths[3], 5, f"{p_val - c_val:+,.3f}  ", border="LRB", align="R", fill=True)
         pdf.ln()
 
-    # Visual Analysis Charts Page
+    # Category Charts Page
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_text_color(*PRIMARY_COLOR)
@@ -361,7 +395,18 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
         pdf.image(bar_buf, x=12, y=chart_y, w=img_w, h=img_h)
         pdf.image(pie_buf, x=150, y=chart_y, w=img_w, h=img_h)
 
-    # Detailed Data Table
+    # Date Comparison Visual Page (ADDED)
+    if has_compare:
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_text_color(*PRIMARY_COLOR)
+        pdf.cell(0, 8, f"Date Comparison Analysis ({date_str} vs {compare_date})", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(4)
+
+        comp_chart_buf = generate_comparison_bar_chart_bytes(primary_sums, compare_sums, date_str, compare_date)
+        pdf.image(comp_chart_buf, x=15, y=pdf.get_y(), w=267, h=110)
+
+    # Detailed Data Table Page
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_text_color(*PRIMARY_COLOR)
@@ -429,7 +474,6 @@ def generate_material_status_pdf_report(report_date, df_mat):
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
 
-    # Title Banner
     pdf.set_fill_color(*PRIMARY_COLOR)
     pdf.rect(0, 0, 297, 22, style="F")
     pdf.set_xy(0, 6)
@@ -438,7 +482,6 @@ def generate_material_status_pdf_report(report_date, df_mat):
     pdf.cell(297, 10, f"Material Status Executive Report - {report_date}", align="C")
     pdf.set_y(26)
 
-    # Key Metrics Cards
     total_qty = df_mat["QTY"].sum()
     status_summary = df_mat.groupby("STATUS")["QTY"].sum().reset_index()
     source_summary = df_mat.groupby("FROM")["QTY"].sum().reset_index()
@@ -448,14 +491,11 @@ def generate_material_status_pdf_report(report_date, df_mat):
     pdf.cell(0, 6, "Material Status KPI Summary", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1)
 
-    # 4 Cards Row
     card_w, card_h, start_x = 66, 15, 12
     start_y = pdf.get_y()
 
-    # Total QTY
     draw_metric_card(pdf, start_x, start_y, card_w, card_h, "TOTAL MATERIAL QTY", total_qty, unit="MT")
 
-    # Dynamic status cards
     unique_statuses = status_summary["STATUS"].tolist()
     for idx, st_name in enumerate(unique_statuses[:3]):
         x = start_x + (idx + 1) * (card_w + 3)
@@ -464,7 +504,6 @@ def generate_material_status_pdf_report(report_date, df_mat):
 
     pdf.set_y(start_y + card_h + 8)
 
-    # Source vs Status Pivot Table Summary
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(*PRIMARY_COLOR)
     pdf.cell(0, 6, "Source (FROM) vs Status Breakdown Matrix", new_x="LMARGIN", new_y="NEXT")
@@ -495,7 +534,6 @@ def generate_material_status_pdf_report(report_date, df_mat):
             pdf.cell(p_width, 5, f"{val:,.3f}", border="LRB", align="R", fill=True)
         pdf.ln()
 
-    # Pivot Total Row
     pdf.set_font("Helvetica", "B", 8)
     pdf.set_fill_color(220, 238, 222)
     pdf.set_text_color(20, 83, 45)
@@ -504,7 +542,6 @@ def generate_material_status_pdf_report(report_date, df_mat):
         pdf.cell(p_width, 6, f"{pivot_df[col].sum():,.3f}", border=1, align="R", fill=True)
     pdf.ln()
 
-    # Visual Charts Page
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_text_color(*PRIMARY_COLOR)
@@ -518,7 +555,6 @@ def generate_material_status_pdf_report(report_date, df_mat):
     pdf.image(pie_mat_buf, x=12, y=chart_y, w=132, h=75)
     pdf.image(bar_mat_buf, x=150, y=chart_y, w=132, h=75)
 
-    # Detailed Table Page
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_text_color(*PRIMARY_COLOR)
@@ -564,7 +600,6 @@ def generate_material_status_pdf_report(report_date, df_mat):
         pdf.cell(mat_widths[7], 5, exp_date_str, border="LRB", align="C", fill=True)
         pdf.ln()
 
-    # Total Row
     if pdf.get_y() > 180:
         pdf.add_page()
         draw_mat_table_header()
@@ -589,13 +624,9 @@ if uploaded_file:
     xls = pd.ExcelFile(uploaded_file)
     all_sheets = xls.sheet_names
 
-    # Check for Material Status sheet (allowing trailing spaces)
     mat_status_sheet = next((s for s in all_sheets if s.strip().lower() == "material status"), None)
-    
-    # Detect tabs matching date pattern DD.MM.YYYY
     date_sheets = [s for s in all_sheets if re.match(r"^\d{2}\.\d{2}\.\d{4}$", s.strip())]
 
-    # Mode Selector
     app_mode = st.sidebar.radio("Select Analysis Module", ["Daily Stock Analysis", "Material Status"])
 
     # ---------------------------------------------------------
@@ -617,7 +648,6 @@ if uploaded_file:
             else:
                 st.sidebar.warning("Add more date tabs to compare.")
 
-        # Load data
         df_primary = parse_sheet_data(uploaded_file, selected_date)
         primary_sums = df_primary[METRIC_COLS].sum()
 
@@ -628,7 +658,6 @@ if uploaded_file:
 
         st.header(f"📌 Key Metrics Overview: {selected_date}")
 
-        # Core Metrics
         r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
         for col_widget, metric in zip([r1_col1, r1_col2, r1_col3, r1_col4], ["GD STOCK", "SOLD QTY", "INTANS", "BAL. QTY"]):
             with col_widget:
@@ -716,7 +745,6 @@ if uploaded_file:
         status_grp = df_mat.groupby("STATUS")["QTY"].sum().to_dict()
         source_grp = df_mat.groupby("FROM")["QTY"].sum().reset_index()
 
-        # KPI CARDS
         kpi_cols = st.columns(1 + len(status_grp))
         with kpi_cols[0]:
             st.metric("TOTAL MATERIAL QTY", f"{total_mat_qty:,.3f} MT")
