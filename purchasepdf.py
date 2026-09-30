@@ -251,7 +251,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     # 1. KEY METRICS CARDS
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(*PRIMARY_COLOR)
-    pdf.cell(0, 6, f"Key Metrics Overview: {date_str}", ln=True)
+    pdf.cell(0, 6, f"Key Metrics Overview: {date_str}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1)
 
     row1_metrics = ["GD STOCK", "SOLD QTY", "INTANS", "BAL. QTY"]
@@ -272,7 +272,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     # Orders & Movements
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(*PRIMARY_COLOR)
-    pdf.cell(0, 6, "Orders & Movements", ln=True)
+    pdf.cell(0, 6, "Orders & Movements", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1)
 
     row2_metrics = [("TOTAL COIL", "COIL"), ("TOTAL BOOKING", "BOOKING"), ("TOTAL SAIL BSO", "SAIL BSO")]
@@ -291,7 +291,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     # 2. FULL METRICS SUMMARY TABLE
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(*PRIMARY_COLOR)
-    pdf.cell(0, 6, "Full Metrics Summary Table", ln=True)
+    pdf.cell(0, 6, "Full Metrics Summary Table", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1)
 
     has_compare = compare_sums is not None
@@ -332,7 +332,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_text_color(*PRIMARY_COLOR)
-    pdf.cell(0, 8, "Visual Analysis - Category Breakdown", ln=True)
+    pdf.cell(0, 8, "Visual Analysis - Category Breakdown", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
 
     chart_y = pdf.get_y()
@@ -352,7 +352,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
         pdf.set_y(chart_y + img_h + 8)
         pdf.set_font("Helvetica", "B", 13)
         pdf.set_text_color(*PRIMARY_COLOR)
-        pdf.cell(0, 8, f"Date Comparison Analysis ({date_str} vs {compare_date})", ln=True)
+        pdf.cell(0, 8, f"Date Comparison Analysis ({date_str} vs {compare_date})", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
 
         comp_chart_buf = generate_comparison_bar_chart_bytes(primary_sums, compare_sums, date_str, compare_date)
@@ -363,7 +363,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
 
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_text_color(*PRIMARY_COLOR)
-    pdf.cell(0, 8, f"Detailed Data Table ({date_str})", ln=True)
+    pdf.cell(0, 8, f"Detailed Data Table ({date_str})", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
 
     table_cols = ["SR.NO.", "CAT.", "THIK", "WIDTH", "GD STOCK", "COIL", "SOLD QTY", "INTANS", "BOOKING", "SAIL BSO", "BAL. QTY"]
