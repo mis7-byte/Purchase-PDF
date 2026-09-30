@@ -21,15 +21,30 @@ METRIC_COLS = [
 
 # --- HELPER FUNCTIONS ---
 def parse_sheet_data(uploaded_file, sheet_name):
+    """Parses a specific date tab, ignoring Excel summary total rows and parsing unit strings."""
+    # Read sheet starting at Row 2 (index 1) for column headers
     df = pd.read_excel(uploaded_file, sheet_name=sheet_name, header=1)
+    
+    # Clean column names
     df.columns = [str(c).strip().upper() for c in df.columns]
+    
+    # Drop empty rows
     df = df.dropna(how="all")
+    
+    # Filter out summary/total rows at the bottom (keep only rows where SR.NO is numeric)
     if "SR.NO." in df.columns:
-        df = df[df["SR.NO."].notna()]
+        df["SR.NO._NUM"] = pd.to_numeric(df["SR.NO."], errors="coerce")
+        df = df[df["SR.NO._NUM"].notna()].copy()
+        df = df.drop(columns=["SR.NO._NUM"])
 
+    # Clean THIK column (remove 'mm', 'MM', spaces if present)
+    if "THIK" in df.columns:
+        df["THIK"] = df["THIK"].astype(str).str.replace(r"(?i)\s*mm", "", regex=True)
+
+    # Convert numeric metrics safely
     for col in NUMERIC_COLS:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
         else:
             df[col] = 0.0
 
@@ -37,10 +52,12 @@ def parse_sheet_data(uploaded_file, sheet_name):
 
 
 def generate_pdf_report(date_str, df_summary, df_raw=None, compare_date_str=None, df_comp_summary=None):
+    """Generates a downloadable PDF report for a single date or comparison."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 16)
 
+    # Title
     if compare_date_str:
         pdf.cell(0, 10, f"Stock Comparison Report: {date_str} vs {compare_date_str}", ln=True, align="C")
     else:
@@ -51,6 +68,7 @@ def generate_pdf_report(date_str, df_summary, df_raw=None, compare_date_str=None
     pdf.cell(0, 8, "Key Metric Totals:", ln=True)
     pdf.set_font("Helvetica", "", 10)
 
+    # Header Table
     pdf.set_fill_color(240, 240, 240)
     pdf.cell(60, 7, "Metric", 1, 0, "C", fill=True)
     pdf.cell(60, 7, f"Date: {date_str}", 1, 0, "C", fill=True)
@@ -61,12 +79,13 @@ def generate_pdf_report(date_str, df_summary, df_raw=None, compare_date_str=None
     for col in METRIC_COLS:
         val1 = df_summary.get(col, 0)
         pdf.cell(60, 6, col, 1)
-        pdf.cell(60, 6, f"{val1:,.2f}", 1, 0, "R")
+        pdf.cell(60, 6, f"{val1:,.3f}", 1, 0, "R")
         if compare_date_str and df_comp_summary is not None:
             val2 = df_comp_summary.get(col, 0)
-            pdf.cell(60, 6, f"{val2:,.2f}", 1, 0, "R")
+            pdf.cell(60, 6, f"{val2:,.3f}", 1, 0, "R")
         pdf.ln()
 
+    # Category Summary Section
     if df_raw is not None and "CAT." in df_raw.columns:
         pdf.ln(8)
         pdf.set_font("Helvetica", "B", 12)
@@ -85,9 +104,9 @@ def generate_pdf_report(date_str, df_summary, df_raw=None, compare_date_str=None
         pdf.set_font("Helvetica", "", 9)
         for _, row in cat_summary.iterrows():
             pdf.cell(45, 6, str(row["CAT."])[:20], 1)
-            pdf.cell(45, 6, f"{row['GD STOCK']:,.2f}", 1, 0, "R")
-            pdf.cell(45, 6, f"{row['SOLD QTY']:,.2f}", 1, 0, "R")
-            pdf.cell(45, 6, f"{row['BAL. QTY']:,.2f}", 1, 0, "R")
+            pdf.cell(45, 6, f"{row['GD STOCK']:,.3f}", 1, 0, "R")
+            pdf.cell(45, 6, f"{row['SOLD QTY']:,.3f}", 1, 0, "R")
+            pdf.cell(45, 6, f"{row['BAL. QTY']:,.3f}", 1, 0, "R")
             pdf.ln()
 
     return bytes(pdf.output())
@@ -102,10 +121,11 @@ if uploaded_file:
     xls = pd.ExcelFile(uploaded_file)
     all_sheets = xls.sheet_names
 
+    # Detect tabs matching date pattern DD.MM.YYYY
     date_sheets = [s for s in all_sheets if re.match(r"^\d{2}\.\d{2}\.\d{4}$", s.strip())]
 
     if not date_sheets:
-        st.error("No tabs found matching the date format 'DD.MM.YYYY' (e.g., 26.09.2026). Please check sheet tab names.")
+        st.error("No tabs found matching the date format 'DD.MM.YYYY' (e.g., 29.09.2026). Please check sheet tab names.")
         st.stop()
 
     selected_date = st.sidebar.selectbox("Select Primary Date", date_sheets)
@@ -119,6 +139,7 @@ if uploaded_file:
         else:
             st.sidebar.warning("Add more date tabs to compare.")
 
+    # Load & parse data
     df_primary = parse_sheet_data(uploaded_file, selected_date)
     primary_sums = df_primary[METRIC_COLS].sum()
 
@@ -128,6 +149,7 @@ if uploaded_file:
         df_compare = parse_sheet_data(uploaded_file, compare_date)
         compare_sums = df_compare[METRIC_COLS].sum()
 
+    # --- KPI SECTION ---
     st.header(f"📌 Key Metrics Overview: {selected_date}")
 
     cols = st.columns(4)
@@ -137,9 +159,10 @@ if uploaded_file:
             delta_val = None
             if compare_sums is not None:
                 diff = val - compare_sums[metric]
-                delta_val = f"{diff:+,.2f} vs {compare_date}"
-            st.metric(label=metric, value=f"{val:,.2f}", delta=delta_val)
+                delta_val = f"{diff:+,.3f} vs {compare_date}"
+            st.metric(label=metric, value=f"{val:,.3f}", delta=delta_val)
 
+    # --- EXPANDABLE COMPLETE METRICS TABLE ---
     with st.expander("🔢 Complete Metric Totals Summary"):
         summary_data = {"Metric": METRIC_COLS, f"{selected_date} Total": [primary_sums[m] for m in METRIC_COLS]}
         if compare_sums is not None:
@@ -148,6 +171,7 @@ if uploaded_file:
 
         st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
 
+    # --- CHARTS SECTION ---
     st.markdown("---")
     st.header("📈 Visual Analysis")
 
@@ -190,6 +214,7 @@ if uploaded_file:
         else:
             st.info("Enable 'Compare with another date' in the sidebar to view comparison charts.")
 
+    # --- DATA TABLE VIEW ---
     st.markdown("---")
     st.header(f"📄 Detailed Data Table ({selected_date})")
 
@@ -202,6 +227,7 @@ if uploaded_file:
     df_display = pd.concat([df_display, pd.DataFrame([total_row])], ignore_index=True)
     st.dataframe(df_display, use_container_width=True)
 
+    # --- PDF EXPORT SECTION ---
     st.markdown("---")
     st.header("📥 Export Report")
 
