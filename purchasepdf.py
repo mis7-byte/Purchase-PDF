@@ -22,7 +22,6 @@ METRIC_COLS = [
 # --- HELPER FUNCTIONS ---
 def parse_sheet_data(uploaded_file, sheet_name):
     """Parses a specific date tab, ignoring Excel summary total rows and parsing unit strings."""
-    # Read sheet starting at Row 2 (index 1) for column headers
     df = pd.read_excel(uploaded_file, sheet_name=sheet_name, header=1)
     
     # Clean column names
@@ -31,13 +30,13 @@ def parse_sheet_data(uploaded_file, sheet_name):
     # Drop empty rows
     df = df.dropna(how="all")
     
-    # Filter out summary/total rows at the bottom (keep only rows where SR.NO is numeric)
+    # Filter out summary/total rows at the bottom (keep only valid data rows with numeric SR.NO)
     if "SR.NO." in df.columns:
         df["SR.NO._NUM"] = pd.to_numeric(df["SR.NO."], errors="coerce")
         df = df[df["SR.NO._NUM"].notna()].copy()
         df = df.drop(columns=["SR.NO._NUM"])
 
-    # Clean THIK column (remove 'mm', 'MM', spaces if present)
+    # Clean THIK column (strip unit strings like 'mm')
     if "THIK" in df.columns:
         df["THIK"] = df["THIK"].astype(str).str.replace(r"(?i)\s*mm", "", regex=True)
 
@@ -68,7 +67,7 @@ def generate_pdf_report(date_str, df_summary, df_raw=None, compare_date_str=None
     pdf.cell(0, 8, "Key Metric Totals:", ln=True)
     pdf.set_font("Helvetica", "", 10)
 
-    # Header Table
+    # Summary Table
     pdf.set_fill_color(240, 240, 240)
     pdf.cell(60, 7, "Metric", 1, 0, "C", fill=True)
     pdf.cell(60, 7, f"Date: {date_str}", 1, 0, "C", fill=True)
@@ -85,7 +84,7 @@ def generate_pdf_report(date_str, df_summary, df_raw=None, compare_date_str=None
             pdf.cell(60, 6, f"{val2:,.3f}", 1, 0, "R")
         pdf.ln()
 
-    # Category Summary Section
+    # Category Breakdown
     if df_raw is not None and "CAT." in df_raw.columns:
         pdf.ln(8)
         pdf.set_font("Helvetica", "B", 12)
@@ -149,21 +148,29 @@ if uploaded_file:
         df_compare = parse_sheet_data(uploaded_file, compare_date)
         compare_sums = df_compare[METRIC_COLS].sum()
 
-    # --- KPI SECTION ---
+    # --- TOP KPI METRICS OVERVIEW ---
     st.header(f"📌 Key Metrics Overview: {selected_date}")
 
-    cols = st.columns(4)
-    for idx, metric in enumerate(["GD STOCK", "SOLD QTY", "BOOKING", "BAL. QTY"]):
-        with cols[idx % 4]:
+    # Row 1: Core Stock Quantities
+    r1_col1, r1_col2, r1_col3, r1_col4 = st.columns(4)
+    for col_widget, metric in zip([r1_col1, r1_col2, r1_col3, r1_col4], ["GD STOCK", "SOLD QTY", "INTANS", "BAL. QTY"]):
+        with col_widget:
             val = primary_sums[metric]
-            delta_val = None
-            if compare_sums is not None:
-                diff = val - compare_sums[metric]
-                delta_val = f"{diff:+,.3f} vs {compare_date}"
+            delta_val = f"{val - compare_sums[metric]:+,.3f} vs {compare_date}" if compare_sums is not None else None
             st.metric(label=metric, value=f"{val:,.3f}", delta=delta_val)
 
+    st.markdown("### 📦 Orders & Movements")
+    
+    # Row 2: Coil, Booking, Sail BSO Sums
+    r2_col1, r2_col2, r2_col3 = st.columns(3)
+    for col_widget, metric in zip([r2_col1, r2_col2, r2_col3], ["COIL", "BOOKING", "SAIL BSO"]):
+        with col_widget:
+            val = primary_sums[metric]
+            delta_val = f"{val - compare_sums[metric]:+,.3f} vs {compare_date}" if compare_sums is not None else None
+            st.metric(label=f"TOTAL {metric}", value=f"{val:,.3f}", delta=delta_val)
+
     # --- EXPANDABLE COMPLETE METRICS TABLE ---
-    with st.expander("🔢 Complete Metric Totals Summary"):
+    with st.expander("🔢 View Full Metrics Summary Table"):
         summary_data = {"Metric": METRIC_COLS, f"{selected_date} Total": [primary_sums[m] for m in METRIC_COLS]}
         if compare_sums is not None:
             summary_data[f"{compare_date} Total"] = [compare_sums[m] for m in METRIC_COLS]
