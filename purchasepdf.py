@@ -27,6 +27,10 @@ TEXT_MUTED = (113, 128, 150)     # Gray Label Text (#718096)
 BORDER_COLOR = (226, 232, 240)   # Light Border Gray (#E2E8F0)
 ROW_ALT = (248, 250, 252)        # Alternating Row Striping (#F8FAFC)
 
+# Highlight Colors for Entire Row (BAL. QTY <= 0)
+ROW_RED_BG = (254, 226, 226)    # Light Red (#FEE2E2)
+ROW_RED_TEXT = (153, 27, 27)    # Dark Red (#991B1B)
+
 # Badge Colors
 GREEN_BG = (220, 252, 231)
 GREEN_TEXT = (22, 101, 52)
@@ -85,31 +89,16 @@ def parse_material_status_sheet(uploaded_file, sheet_name):
 
 # --- HELPER FUNCTIONS FOR MATERIAL LIFTING QTY TAB ---
 def parse_material_lifting_sheet(uploaded_file, sheet_name):
-    """Parses the 'MATERIAL LIFTING QTY' sheet tab dynamically."""
-    header_raw = pd.read_excel(uploaded_file, sheet_name=sheet_name, nrows=1)
-    header_title = header_raw.columns[0] if len(header_raw.columns) > 0 else "Material Lifting Report"
-
+    """Parses the 'Material Lifting Qty' sheet."""
     df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
-    
-    # Check if first row contains column headers like 'PARTY NAME'
-    if any(df.iloc[0].astype(str).str.upper().str.contains("PARTY")):
-        df.columns = df.iloc[0].astype(str).str.strip().str.upper()
-        df = df.iloc[1:].reset_index(drop=True)
-    else:
-        df.columns = [str(c).strip().upper() for c in df.columns]
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    df = df.dropna(how="all")
 
-    party_col = next((c for c in df.columns if "PARTY" in c or "NAME" in c), df.columns[0])
-    qty_col = next((c for c in df.columns if "LIFT" in c or "QTY" in c), df.columns[1])
+    for col in df.columns:
+        if "QTY" in col or "LIFT" in col or "BAL" in col or "STOCK" in col:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
-    df = df.rename(columns={party_col: "PARTY NAME", qty_col: "LIFT QTY (MT)"})
-    df["PARTY NAME"] = df["PARTY NAME"].astype(str).str.strip().str.upper()
-    df["LIFT QTY (MT)"] = pd.to_numeric(df["LIFT QTY (MT)"], errors="coerce").fillna(0.0)
-
-    # Exclude total rows if present
-    df = df[~df["PARTY NAME"].isin(["TOTAL", "GRAND TOTAL", "NAN"])].copy()
-    df = df[df["PARTY NAME"] != ""].reset_index(drop=True)
-
-    return header_title, df
+    return df
 
 
 # --- CHART GENERATION FOR PDF ---
@@ -268,61 +257,6 @@ def generate_mat_source_bar_bytes(source_df):
     return buf
 
 
-def generate_lifting_bar_bytes(df_lifting):
-    """Generates bar chart for Material Lifting Qty PDF."""
-    fig, ax = plt.subplots(figsize=(6, 3.5), dpi=200)
-    df_sorted = df_lifting.sort_values(by="LIFT QTY (MT)", ascending=True)
-    
-    parties = df_sorted["PARTY NAME"].astype(str).tolist()
-    qtys = df_sorted["LIFT QTY (MT)"].tolist()
-
-    rects = ax.barh(parties, qtys, color="#4299E1", height=0.5)
-    ax.bar_label(rects, fmt="%.2f", padding=3, fontsize=7, color="#2D3748", fontweight="bold")
-
-    ax.set_title("Lifted Quantity by Party (MT)", fontsize=10, fontweight="bold", color="#1A365D", pad=12)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.spines["left"].set_color("#CBD5E0")
-    ax.spines["bottom"].set_color("#CBD5E0")
-    ax.grid(axis="x", linestyle="--", alpha=0.4, color="#CBD5E0")
-
-    max_val = max(qtys) if qtys else 1
-    ax.set_xlim(0, max_val * 1.18)
-
-    plt.tight_layout()
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    return buf
-
-
-def generate_lifting_pie_bytes(df_lifting):
-    """Generates pie chart for Material Lifting Qty PDF."""
-    fig, ax = plt.subplots(figsize=(6, 3.5), dpi=200)
-    wedges, texts, autotexts = ax.pie(
-        df_lifting["LIFT QTY (MT)"], 
-        labels=df_lifting["PARTY NAME"], 
-        autopct="%1.1f%%", 
-        startangle=90,
-        pctdistance=0.72,
-        colors=["#1A365D", "#4299E1", "#319795", "#ED8936", "#9F7AEA", "#DD6B20", "#3182CE"],
-        textprops=dict(fontsize=7, color="#2D3748")
-    )
-    for autotext in autotexts:
-        autotext.set_fontweight("bold")
-        autotext.set_color("white")
-        autotext.set_fontsize(7)
-
-    ax.set_title("Share of Material Lifted Qty (%)", fontsize=10, fontweight="bold", color="#1A365D", pad=12)
-    plt.tight_layout()
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    return buf
-
-
 class AppPDF(FPDF):
     def header(self):
         pass
@@ -347,7 +281,7 @@ def draw_metric_card(pdf, x, y, width, height, label, val, diff=None, compare_da
     pdf.set_xy(x, y + 6.5)
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(*PRIMARY_COLOR)
-    val_str = f"{val:,.3f} {unit}".strip() if isinstance(val, (int, float)) else str(val)
+    val_str = f"{val:,.3f} {unit}".strip()
     pdf.cell(width, 5, val_str, align="C")
 
     if diff is not None and compare_date is not None:
@@ -449,14 +383,22 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     pdf.set_font("Helvetica", "", 8)
     pdf.set_draw_color(*BORDER_COLOR)
     for idx, m in enumerate(METRIC_COLS):
-        bg = ROW_ALT if idx % 2 == 1 else (255, 255, 255)
-        pdf.set_fill_color(*bg)
-        pdf.set_text_color(*TEXT_DARK)
+        p_val = primary_sums.get(m, 0)
         
+        # Check if entire row should be highlighted red
+        if m == "BAL. QTY" and p_val <= 0:
+            bg = ROW_RED_BG
+            txt_col = ROW_RED_TEXT
+        else:
+            bg = ROW_ALT if idx % 2 == 1 else (255, 255, 255)
+            txt_col = TEXT_DARK
+
+        pdf.set_fill_color(*bg)
+        pdf.set_text_color(*txt_col)
         pdf.cell(sum_widths[0], 5, f"  {m}", border="LRB", align="L", fill=True)
-        pdf.cell(sum_widths[1], 5, f"{primary_sums.get(m, 0):,.3f}  ", border="LRB", align="R", fill=True)
+        pdf.cell(sum_widths[1], 5, f"{p_val:,.3f}  ", border="LRB", align="R", fill=True)
+        
         if has_compare:
-            p_val = primary_sums.get(m, 0)
             c_val = compare_sums.get(m, 0)
             pdf.cell(sum_widths[2], 5, f"{c_val:,.3f}  ", border="LRB", align="R", fill=True)
             pdf.cell(sum_widths[3], 5, f"{p_val - c_val:+,.3f}  ", border="LRB", align="R", fill=True)
@@ -518,9 +460,18 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
             pdf.add_page()
             draw_table_header()
 
-        bg = ROW_ALT if r_idx % 2 == 1 else (255, 255, 255)
+        bal_val = row.get('BAL. QTY', 0)
+        
+        # Red background and text for entire row when BAL. QTY <= 0
+        if bal_val <= 0:
+            bg = ROW_RED_BG
+            txt_col = ROW_RED_TEXT
+        else:
+            bg = ROW_ALT if r_idx % 2 == 1 else (255, 255, 255)
+            txt_col = TEXT_DARK
+
         pdf.set_fill_color(*bg)
-        pdf.set_text_color(*TEXT_DARK)
+        pdf.set_text_color(*txt_col)
 
         pdf.cell(col_widths[0], 5, str(int(row["SR.NO."])) if pd.notna(row.get("SR.NO.")) else "", border="LRB", align="C", fill=True)
         pdf.cell(col_widths[1], 5, str(row.get("CAT.", ""))[:12], border="LRB", align="L", fill=True)
@@ -532,7 +483,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
         pdf.cell(col_widths[7], 5, f"{row.get('INTANS', 0):,.2f}", border="LRB", align="R", fill=True)
         pdf.cell(col_widths[8], 5, f"{row.get('BOOKING', 0):,.2f}", border="LRB", align="R", fill=True)
         pdf.cell(col_widths[9], 5, f"{row.get('SAIL BSO', 0):,.2f}", border="LRB", align="R", fill=True)
-        pdf.cell(col_widths[10], 5, f"{row.get('BAL. QTY', 0):,.2f}", border="LRB", align="R", fill=True)
+        pdf.cell(col_widths[10], 5, f"{bal_val:,.2f}", border="LRB", align="R", fill=True)
         pdf.ln()
 
     # Total Row
@@ -546,7 +497,8 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     pdf.set_draw_color(180, 220, 185)
     pdf.cell(col_widths[0] + col_widths[1] + col_widths[2] + col_widths[3], 6, "TOTAL", border=1, align="C", fill=True)
     for col, w in zip(METRIC_COLS, col_widths[4:]):
-        pdf.cell(w, 6, f"{primary_sums.get(col, 0):,.2f}", border=1, align="R", fill=True)
+        col_val = primary_sums.get(col, 0)
+        pdf.cell(w, 6, f"{col_val:,.2f}", border=1, align="R", fill=True)
     pdf.ln()
 
     return bytes(pdf.output())
@@ -699,102 +651,6 @@ def generate_material_status_pdf_report(report_date, df_mat):
     return bytes(pdf.output())
 
 
-def generate_material_lifting_pdf_report(title_str, df_lifting):
-    """Generates PDF report for Material Lifting Qty sheet."""
-    pdf = AppPDF(orientation="L", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=12)
-    pdf.add_page()
-
-    pdf.set_fill_color(*PRIMARY_COLOR)
-    pdf.rect(0, 0, 297, 22, style="F")
-    pdf.set_xy(0, 6)
-    pdf.set_font("Helvetica", "B", 15)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(297, 10, f"Material Lifting Report - {title_str}", align="C")
-    pdf.set_y(26)
-
-    total_qty = df_lifting["LIFT QTY (MT)"].sum()
-    total_parties = len(df_lifting)
-
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.set_text_color(*PRIMARY_COLOR)
-    pdf.cell(0, 6, "Material Lifting Key Metrics", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(1)
-
-    card_w, card_h, start_x = 88, 15, 12
-    start_y = pdf.get_y()
-
-    draw_metric_card(pdf, start_x, start_y, card_w, card_h, "TOTAL LIFTED QTY", total_qty, unit="MT")
-    draw_metric_card(pdf, start_x + card_w + 6, start_y, card_w, card_h, "TOTAL PARTIES", total_parties)
-
-    pdf.set_y(start_y + card_h + 8)
-
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.set_text_color(*PRIMARY_COLOR)
-    pdf.cell(0, 8, "Visual Analytics", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
-
-    chart_y = pdf.get_y()
-    bar_lifting_buf = generate_lifting_bar_bytes(df_lifting)
-    pie_lifting_buf = generate_lifting_pie_bytes(df_lifting)
-
-    pdf.image(bar_lifting_buf, x=12, y=chart_y, w=132, h=75)
-    pdf.image(pie_lifting_buf, x=150, y=chart_y, w=132, h=75)
-
-    pdf.add_page()
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.set_text_color(*PRIMARY_COLOR)
-    pdf.cell(0, 8, "Detailed Material Lifting Summary", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
-
-    lift_cols = ["PARTY NAME", "LIFT QTY (MT)", "SHARE (%)"]
-    lift_widths = [130, 70, 72]
-
-    def draw_lift_table_header():
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_fill_color(*PRIMARY_COLOR)
-        pdf.set_text_color(255, 255, 255)
-        pdf.set_draw_color(*PRIMARY_COLOR)
-        for col, w in zip(lift_cols, lift_widths):
-            pdf.cell(w, 6, col, border=1, align="C", fill=True)
-        pdf.ln()
-
-    draw_lift_table_header()
-    pdf.set_font("Helvetica", "", 8)
-    pdf.set_draw_color(*BORDER_COLOR)
-
-    for r_idx, (_, row) in enumerate(df_lifting.iterrows()):
-        if pdf.get_y() > 180:
-            pdf.add_page()
-            draw_lift_table_header()
-
-        bg = ROW_ALT if r_idx % 2 == 1 else (255, 255, 255)
-        pdf.set_fill_color(*bg)
-        pdf.set_text_color(*TEXT_DARK)
-
-        qty_val = row.get("LIFT QTY (MT)", 0.0)
-        share_pct = (qty_val / total_qty * 100) if total_qty > 0 else 0.0
-
-        pdf.cell(lift_widths[0], 5.5, str(row.get("PARTY NAME", "")), border="LRB", align="L", fill=True)
-        pdf.cell(lift_widths[1], 5.5, f"{qty_val:,.3f}", border="LRB", align="R", fill=True)
-        pdf.cell(lift_widths[2], 5.5, f"{share_pct:.1f}%", border="LRB", align="R", fill=True)
-        pdf.ln()
-
-    if pdf.get_y() > 180:
-        pdf.add_page()
-        draw_lift_table_header()
-
-    pdf.set_font("Helvetica", "B", 8)
-    pdf.set_fill_color(220, 238, 222)
-    pdf.set_text_color(20, 83, 45)
-    pdf.cell(lift_widths[0], 6, "TOTAL", border=1, align="L", fill=True)
-    pdf.cell(lift_widths[1], 6, f"{total_qty:,.3f}", border=1, align="R", fill=True)
-    pdf.cell(lift_widths[2], 6, "100.0%", border=1, align="R", fill=True)
-    pdf.ln()
-
-    return bytes(pdf.output())
-
-
 # --- MAIN APP LAYOUT ---
 st.title("📊 Inventory & Material Status Analytics Dashboard")
 
@@ -804,11 +660,23 @@ if uploaded_file:
     xls = pd.ExcelFile(uploaded_file)
     all_sheets = xls.sheet_names
 
-    mat_status_sheet = next((s for s in all_sheets if s.strip().lower() == "material status"), None)
-    mat_lifting_sheet = next((s for s in all_sheets if "lifting" in s.strip().lower()), None)
+    mat_status_sheet = next((s for s in all_sheets if "material status" in s.strip().lower()), None)
+    mat_lifting_sheet = next((s for s in all_sheets if "lifting" in s.strip().lower() or "party" in s.strip().lower()), None)
     date_sheets = [s for s in all_sheets if re.match(r"^\d{2}\.\d{2}\.\d{4}$", s.strip())]
 
-    app_mode = st.sidebar.radio("Select Analysis Module", ["Daily Stock Analysis", "Material Status", "Material Lifting Qty"])
+    # Auto-detect available modules
+    available_modules = []
+    if date_sheets:
+        available_modules.append("Daily Stock Analysis")
+    if mat_status_sheet:
+        available_modules.append("Material Status")
+    if mat_lifting_sheet or (not date_sheets and not mat_status_sheet):
+        available_modules.append("Material Lifting Qty")
+
+    if not available_modules:
+        available_modules = ["Daily Stock Analysis", "Material Status", "Material Lifting Qty"]
+
+    app_mode = st.sidebar.radio("Select Analysis Module", available_modules)
 
     # ---------------------------------------------------------
     # MODULE 1: DAILY STOCK ANALYSIS
@@ -859,7 +727,16 @@ if uploaded_file:
             if compare_sums is not None:
                 summary_data[f"{compare_date} Total"] = [compare_sums[m] for m in METRIC_COLS]
                 summary_data["Difference"] = [primary_sums[m] - compare_sums[m] for m in METRIC_COLS]
-            st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
+            
+            df_summary = pd.DataFrame(summary_data)
+            
+            # Highlight entire row red if Metric is BAL. QTY and value <= 0
+            def highlight_summary_row(row):
+                if row["Metric"] == "BAL. QTY" and row[f"{selected_date} Total"] <= 0:
+                    return ["background-color: #FEE2E2; color: #991B1B; font-weight: bold;"] * len(row)
+                return [""] * len(row)
+
+            st.dataframe(df_summary.style.apply(highlight_summary_row, axis=1), use_container_width=True)
 
         st.markdown("---")
         st.header("📈 Visual Analysis")
@@ -902,7 +779,18 @@ if uploaded_file:
         for col in METRIC_COLS:
             total_row[col] = primary_sums[col]
         df_display = pd.concat([df_display, pd.DataFrame([total_row])], ignore_index=True)
-        st.dataframe(df_display, use_container_width=True)
+        
+        # Highlight entire row red if BAL. QTY <= 0
+        def highlight_entire_row(row):
+            val = row.get("BAL. QTY", None)
+            if isinstance(val, (int, float)) and val <= 0:
+                return ["background-color: #FEE2E2; color: #991B1B; font-weight: bold;"] * len(row)
+            return [""] * len(row)
+
+        if "BAL. QTY" in df_display.columns:
+            st.dataframe(df_display.style.apply(highlight_entire_row, axis=1), use_container_width=True)
+        else:
+            st.dataframe(df_display, use_container_width=True)
 
         st.markdown("---")
         st.header("📥 Export Report")
@@ -961,7 +849,15 @@ if uploaded_file:
         tot_mat_row["CATEGORY"] = "TOTAL"
         tot_mat_row["QTY"] = total_mat_qty
         df_mat_display = pd.concat([df_mat_display, pd.DataFrame([tot_mat_row])], ignore_index=True)
-        st.dataframe(df_mat_display, use_container_width=True)
+
+        # Highlight entire row red if QTY <= 0
+        def highlight_mat_row(row):
+            val = row.get("QTY", None)
+            if isinstance(val, (int, float)) and val <= 0:
+                return ["background-color: #FEE2E2; color: #991B1B; font-weight: bold;"] * len(row)
+            return [""] * len(row)
+
+        st.dataframe(df_mat_display.style.apply(highlight_mat_row, axis=1), use_container_width=True)
 
         st.markdown("---")
         st.header("📥 Export Material Status Report")
@@ -973,70 +869,53 @@ if uploaded_file:
     # MODULE 3: MATERIAL LIFTING QTY
     # ---------------------------------------------------------
     elif app_mode == "Material Lifting Qty":
-        if not mat_lifting_sheet:
-            st.error("Sheet related to 'MATERIAL LIFTING QTY' was not found in the uploaded file.")
-            st.stop()
+        sheet_to_use = mat_lifting_sheet if mat_lifting_sheet else all_sheets[0]
+        df_lifting = parse_material_lifting_sheet(uploaded_file, sheet_to_use)
 
-        title_str, df_lifting = parse_material_lifting_sheet(uploaded_file, mat_lifting_sheet)
+        st.header(f"📈 Material Lifting Qty Analysis ({sheet_to_use})")
 
-        st.header(f"🏋️ Material Lifting Qty Overview ({title_str})")
+        # Find key columns dynamically
+        party_col = next((c for c in df_lifting.columns if "PARTY" in c or "NAME" in c or "CUSTOMER" in c), df_lifting.columns[0])
+        qty_cols = [c for c in df_lifting.columns if df_lifting[c].dtype in ['float64', 'int64']]
 
-        total_lift_qty = df_lifting["LIFT QTY (MT)"].sum()
-        total_parties = len(df_lifting)
+        if qty_cols:
+            main_qty_col = next((c for c in qty_cols if "LIFT" in c or "QTY" in c), qty_cols[0])
+            total_lifted = df_lifting[main_qty_col].sum()
 
-        k1, k2 = st.columns(2)
-        with k1:
-            st.metric("TOTAL LIFTED QTY", f"{total_lift_qty:,.3f} MT")
-        with k2:
-            st.metric("TOTAL UNIQUE PARTIES", f"{total_parties}")
+            st.metric("TOTAL LIFTED QUANTITY", f"{total_lifted:,.2f} MT")
 
-        st.markdown("---")
-        st.header("📈 Visual Analytics")
-        l_col1, l_col2 = st.columns(2)
+            st.markdown("---")
+            st.header("📊 Visual Analytics")
+            col1, col2 = st.columns(2)
 
-        with l_col1:
-            fig_lift_bar = px.bar(
-                df_lifting.sort_values("LIFT QTY (MT)", ascending=True),
-                x="LIFT QTY (MT)",
-                y="PARTY NAME",
-                orientation="h",
-                title="Lifted Quantity by Party (MT)",
-                text_auto=".2f",
-                color="LIFT QTY (MT)",
-                color_continuous_scale="Blues"
-            )
-            fig_lift_bar.update_traces(textposition="outside")
-            st.plotly_chart(fig_lift_bar, use_container_width=True)
+            with col1:
+                party_summary = df_lifting.groupby(party_col)[main_qty_col].sum().reset_index().sort_values(by=main_qty_col, ascending=True)
+                fig_bar = px.bar(party_summary, y=party_col, x=main_qty_col, orientation='h',
+                                 title="Lifted Quantity by Party (MT)", text_auto=".2f", color=main_qty_col,
+                                 color_continuous_scale="Blues")
+                st.plotly_chart(fig_bar, use_container_width=True)
 
-        with l_col2:
-            fig_lift_pie = px.pie(
-                df_lifting,
-                names="PARTY NAME",
-                values="LIFT QTY (MT)",
-                title="Share of Material Lifted Qty (%)",
-                hole=0.35
-            )
-            fig_lift_pie.update_traces(textinfo="percent+label")
-            st.plotly_chart(fig_lift_pie, use_container_width=True)
+            with col2:
+                fig_pie = px.pie(df_lifting, names=party_col, values=main_qty_col,
+                                 title="Share of Material Lifted Qty (%)", hole=0.4)
+                fig_pie.update_traces(textinfo="percent+label")
+                st.plotly_chart(fig_pie, use_container_width=True)
 
         st.markdown("---")
-        st.header("📄 Detailed Material Lifting Table")
-        df_lifting_display = df_lifting.copy()
-        df_lifting_display["SHARE (%)"] = (df_lifting_display["LIFT QTY (MT)"] / total_lift_qty * 100).round(2)
-        
-        tot_lift_row = {
-            "PARTY NAME": "TOTAL",
-            "LIFT QTY (MT)": total_lift_qty,
-            "SHARE (%)": 100.0
-        }
-        df_lifting_display = pd.concat([df_lifting_display, pd.DataFrame([tot_lift_row])], ignore_index=True)
-        st.dataframe(df_lifting_display.style.format({"LIFT QTY (MT)": "{:,.3f}", "SHARE (%)": "{:.2f}%"}), use_container_width=True)
+        st.header("📄 Detailed Lifting Data")
 
-        st.markdown("---")
-        st.header("📥 Export Material Lifting Report")
-        lift_pdf_bytes = generate_material_lifting_pdf_report(title_str, df_lifting)
-        lift_filename = "Material_Lifting_Report.pdf"
-        st.download_button("📄 Download Material Lifting PDF Report", data=lift_pdf_bytes, file_name=lift_filename, mime="application/pdf")
+        # Highlight entire row red if available/balance quantity column is <= 0
+        bal_col = next((c for c in df_lifting.columns if "BAL" in c or "AVAIL" in c or "REMAIN" in c), None)
+
+        def highlight_lifting_row(row):
+            if bal_col and isinstance(row.get(bal_col), (int, float)) and row.get(bal_col) <= 0:
+                return ["background-color: #FEE2E2; color: #991B1B; font-weight: bold;"] * len(row)
+            return [""] * len(row)
+
+        if bal_col:
+            st.dataframe(df_lifting.style.apply(highlight_lifting_row, axis=1), use_container_width=True)
+        else:
+            st.dataframe(df_lifting, use_container_width=True)
 
 else:
     st.info("👈 Please upload your stock Excel file from the sidebar to begin.")
