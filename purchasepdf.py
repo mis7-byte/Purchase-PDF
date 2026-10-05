@@ -95,51 +95,159 @@ def _find_column(df, aliases):
 
 
 def parse_material_lifting_sheet(uploaded_file, sheet_name):
-    """Parses the Material Lifting Qty sheet using flexible header matching."""
-    raw = pd.read_excel(uploaded_file, sheet_name=sheet_name, header=0)
-    raw.columns = [str(c).strip().upper() for c in raw.columns]
-    raw = raw.dropna(how="all")
+    """Parses the Material Lifting Qty sheet.
 
-    party_col = _find_column(raw, [
+    The original sheet uses headers on the SECOND row and contains:
+        PARTY NAME
+        LIFT QTY (MT)
+
+    This function therefore checks both header row 0 and header row 1 and
+    accepts the exact original quantity header as well as other common names.
+    """
+
+    def normalize_header(value):
+        if pd.isna(value):
+            return ""
+        text = str(value).strip().upper()
+        text = re.sub(r"\s+", " ", text)
+        return text
+
+    def find_column_from_headers(df, aliases):
+        normalized = {
+            normalize_header(c): c
+            for c in df.columns
+        }
+
+        # First try exact matches.
+        for alias in aliases:
+            key = normalize_header(alias)
+            if key in normalized:
+                return normalized[key]
+
+        # Then try a safe normalized comparison that ignores spaces inside
+        # parentheses, e.g. LIFT QTY (MT) vs LIFT QTY(MT).
+        def compact(value):
+            return re.sub(r"[\s_]+", "", normalize_header(value))
+
+        compact_headers = {
+            compact(c): c
+            for c in df.columns
+        }
+
+        for alias in aliases:
+            key = compact(alias)
+            if key in compact_headers:
+                return compact_headers[key]
+
+        return None
+
+    party_aliases = [
         "PARTY NAME", "PARTY", "CUSTOMER", "CUSTOMER NAME",
         "PARTYNAME", "CLIENT NAME", "CLIENT"
-    ])
-    qty_col = _find_column(raw, [
-        "LIFTED QTY", "LIFT QTY", "LIFTING QTY", "MATERIAL LIFTING QTY",
-        "LIFTED QUANTITY", "LIFTING QUANTITY", "QTY", "QUANTITY"
-    ])
-    cat_col = _find_column(raw, [
+    ]
+
+    qty_aliases = [
+        # Exact header in the original Material Lifting Qty sheet.
+        "LIFT QTY (MT)",
+        "LIFT QTY(MT)",
+        "LIFTED QTY (MT)",
+        "LIFTED QTY(MT)",
+        "LIFTING QTY (MT)",
+        "LIFTING QTY(MT)",
+        "QTY (MT)",
+        "QUANTITY (MT)",
+        # Other accepted quantity headers.
+        "LIFTED QTY",
+        "LIFT QTY",
+        "LIFTING QTY",
+        "MATERIAL LIFTING QTY",
+        "MATERIAL LIFTING QTY (MT)",
+        "LIFTED QUANTITY",
+        "LIFTING QUANTITY",
+        "QTY",
+        "QUANTITY"
+    ]
+
+    cat_aliases = [
         "CAT.", "CAT", "CATEGORY", "MATERIAL CATEGORY"
-    ])
+    ]
 
-    if party_col is None or qty_col is None:
-        # Also support a two-row/header-offset layout like the stock sheets.
-        raw = pd.read_excel(uploaded_file, sheet_name=sheet_name, header=1)
-        raw.columns = [str(c).strip().upper() for c in raw.columns]
-        raw = raw.dropna(how="all")
-        party_col = _find_column(raw, [
-            "PARTY NAME", "PARTY", "CUSTOMER", "CUSTOMER NAME",
-            "PARTYNAME", "CLIENT NAME", "CLIENT"
-        ])
-        qty_col = _find_column(raw, [
-            "LIFTED QTY", "LIFT QTY", "LIFTING QTY", "MATERIAL LIFTING QTY",
-            "LIFTED QUANTITY", "LIFTING QUANTITY", "QTY", "QUANTITY"
-        ])
-        cat_col = _find_column(raw, [
-            "CAT.", "CAT", "CATEGORY", "MATERIAL CATEGORY"
-        ])
+    # The original sheet has the column headers in the SECOND row.
+    # Check both row 1 (Excel row 2) and row 0 for compatibility.
+    candidates = []
 
-    if party_col is None or qty_col is None:
+    for header_row in [1, 0, 2]:
+        try:
+            candidate = pd.read_excel(
+                uploaded_file,
+                sheet_name=sheet_name,
+                header=header_row
+            )
+            candidate.columns = [
+                normalize_header(c)
+                for c in candidate.columns
+            ]
+            candidate = candidate.dropna(how="all")
+
+            party_col = find_column_from_headers(
+                candidate,
+                party_aliases
+            )
+            qty_col = find_column_from_headers(
+                candidate,
+                qty_aliases
+            )
+            cat_col = find_column_from_headers(
+                candidate,
+                cat_aliases
+            )
+
+            candidates.append(
+                (candidate, party_col, qty_col, cat_col, header_row)
+            )
+
+            if party_col is not None and qty_col is not None:
+                raw = candidate
+                break
+
+        except Exception:
+            continue
+    else:
         raise ValueError(
-            "Material Lifting Qty sheet must contain PARTY NAME and a lifting quantity column. "
-            "Accepted quantity headers include LIFTED QTY, LIFTING QTY, LIFT QTY or QTY."
+            "Material Lifting Qty sheet must contain PARTY NAME and "
+            "LIFT QTY (MT). The original sheet uses these headers in "
+            "the second row. Accepted quantity headers include "
+            "LIFT QTY (MT), LIFTED QTY, LIFTING QTY, LIFT QTY or QTY."
         )
 
     result = pd.DataFrame()
-    result["PARTY NAME"] = raw[party_col].fillna("").astype(str).str.strip()
-    result["LIFTED QTY"] = pd.to_numeric(raw[qty_col], errors="coerce").fillna(0.0)
-    result["CAT."] = raw[cat_col].fillna("").astype(str).str.strip().str.upper() if cat_col else ""
-    result = result[result["PARTY NAME"].ne("")].copy()
+    result["PARTY NAME"] = (
+        raw[party_col]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+
+    result["LIFTED QTY"] = pd.to_numeric(
+        raw[qty_col],
+        errors="coerce"
+    ).fillna(0.0)
+
+    if cat_col is not None:
+        result["CAT."] = (
+            raw[cat_col]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+    else:
+        result["CAT."] = ""
+
+    # Remove completely blank party rows and Excel summary/total rows.
+    result = result[
+        result["PARTY NAME"].ne("")
+    ].copy()
 
     return result
 
