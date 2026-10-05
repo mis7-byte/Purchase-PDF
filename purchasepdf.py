@@ -28,58 +28,24 @@ TEXT_MUTED = (113, 128, 150)     # Gray Label Text (#718096)
 BORDER_COLOR = (226, 232, 240)   # Light Border Gray (#E2E8F0)
 ROW_ALT = (248, 250, 252)        # Alternating Row Striping (#F8FAFC)
 
-# Metric Highlight Colors (RGB)
-RED_BG = (254, 226, 226)        # Soft Red
-RED_TEXT = (153, 27, 27)
-YELLOW_BG = (254, 243, 199)     # Soft Yellow
-YELLOW_TEXT = (146, 64, 14)
-GREEN_BG = (220, 252, 231)      # Soft Green
-GREEN_TEXT = (22, 101, 52)
+# Negative Balance Highlight Color (RGB)
+RED_BG = (254, 226, 226)        # Soft Red (#FEE2E2)
+RED_TEXT = (153, 27, 27)        # Dark Red Text (#991B1B)
 
 
-# --- HELPER FUNCTIONS FOR COLORING & THRESHOLDS ---
-def get_bal_qty_color(val, p33=0, p66=0):
-    """Returns RGB tuple and text color tuple based on BAL. QTY value."""
-    try:
-        val = float(val)
-    except (ValueError, TypeError):
-        return (255, 255, 255), TEXT_DARK
-
-    if val < 0 or val < p33:
-        return RED_BG, RED_TEXT
-    elif val <= p66:
-        return YELLOW_BG, YELLOW_TEXT
-    else:
-        return GREEN_BG, GREEN_TEXT
-
-
-def get_bal_qty_thresholds(df):
-    """Calculates 33rd and 66th percentiles for non-negative BAL. QTY."""
-    if "BAL. QTY" not in df.columns:
-        return 0, 0
-    pos_vals = df[df["BAL. QTY"] > 0]["BAL. QTY"]
-    if pos_vals.empty:
-        return 0, 0
-    p33 = np.percentile(pos_vals, 33)
-    p66 = np.percentile(pos_vals, 66)
-    return p33, p66
-
-
-def style_bal_qty(df, p33, p66):
-    """Applies conditional styling to Streamlit Dataframe for BAL. QTY."""
-    def color_cells(val):
+# --- HELPER FUNCTIONS FOR ROW COLORING ---
+def style_negative_bal_qty_rows(df):
+    """Highlights the ENTIRE row in soft red if BAL. QTY is negative."""
+    def highlight_row(row):
         try:
-            val = float(val)
-            if val < 0 or val < p33:
-                return "background-color: #FEE2E2; color: #991B1B; font-weight: bold;"
-            elif val <= p66:
-                return "background-color: #FEF3C7; color: #92400E; font-weight: bold;"
-            else:
-                return "background-color: #DCFCE7; color: #166534; font-weight: bold;"
-        except:
-            return ""
+            val = float(row.get("BAL. QTY", 0))
+            if val < 0:
+                return ["background-color: #FEE2E2; color: #991B1B; font-weight: bold;"] * len(row)
+        except (ValueError, TypeError):
+            pass
+        return [""] * len(row)
 
-    return df.style.map(color_cells, subset=["BAL. QTY"]).format("{:,.2f}", subset=METRIC_COLS)
+    return df.style.apply(highlight_row, axis=1).format("{:,.2f}", subset=[c for c in METRIC_COLS if c in df.columns])
 
 
 # --- HELPER FUNCTIONS FOR STOCK TAB ---
@@ -199,7 +165,6 @@ def generate_pie_chart_bytes(cat_df, date_str):
 
 
 def generate_comparison_bar_chart_bytes(primary_sums, compare_sums, date_str, compare_date):
-    """Generates the side-by-side metric comparison bar chart for PDF."""
     fig, ax = plt.subplots(figsize=(10, 4.2), dpi=200)
     metrics = METRIC_COLS
     x = list(range(len(metrics)))
@@ -298,9 +263,9 @@ class AppPDF(FPDF):
         self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
 
-def draw_metric_card(pdf, x, y, width, height, label, val, diff=None, compare_date=None, unit="", bg_override=None, text_override=None):
-    card_bg = bg_override if bg_override else BG_CARD
-    card_txt = text_override if text_override else PRIMARY_COLOR
+def draw_metric_card(pdf, x, y, width, height, label, val, diff=None, compare_date=None, unit="", is_negative=False):
+    card_bg = RED_BG if is_negative else BG_CARD
+    card_txt = RED_TEXT if is_negative else PRIMARY_COLOR
 
     pdf.set_fill_color(*card_bg)
     pdf.set_draw_color(*BORDER_COLOR)
@@ -320,8 +285,8 @@ def draw_metric_card(pdf, x, y, width, height, label, val, diff=None, compare_da
     if diff is not None and compare_date is not None:
         arrow = "^" if diff >= 0 else "v"
         badge_text = f"{arrow} {diff:+,.3f} vs {compare_date}"
-        bg_col = GREEN_BG if diff >= 0 else RED_BG
-        txt_col = GREEN_TEXT if diff >= 0 else RED_TEXT
+        bg_col = (220, 252, 231) if diff >= 0 else RED_BG
+        txt_col = (22, 101, 52) if diff >= 0 else RED_TEXT
         
         badge_w = width - 8
         badge_h = 4.5
@@ -338,8 +303,8 @@ def draw_metric_card(pdf, x, y, width, height, label, val, diff=None, compare_da
         pdf.cell(badge_w, 3.5, badge_text, align="C")
 
 
-def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, compare_sums=None, p33=0, p66=0):
-    """Generates PDF report for Daily Stock sheet with Color-Coded BAL. QTY."""
+def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, compare_sums=None):
+    """Generates PDF report for Daily Stock sheet highlighting entire negative BAL. QTY rows in red."""
     pdf = AppPDF(orientation="L", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
@@ -371,12 +336,8 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
         x = start_x + idx * (card_w + 3)
         val = primary_sums.get(metric, 0.0)
         diff = (val - compare_sums.get(metric, 0.0)) if compare_sums is not None else None
-        
-        bg_override, txt_override = None, None
-        if metric == "BAL. QTY":
-            bg_override, txt_override = get_bal_qty_color(val, p33, p66)
-            
-        draw_metric_card(pdf, x, start_y, card_w, card_h, metric, val, diff, compare_date, bg_override=bg_override, text_override=txt_override)
+        is_neg = (metric == "BAL. QTY" and val < 0)
+        draw_metric_card(pdf, x, start_y, card_w, card_h, metric, val, diff, compare_date, is_negative=is_neg)
 
     pdf.set_y(start_y + card_h + 5)
 
@@ -421,29 +382,26 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
     pdf.set_font("Helvetica", "", 8)
     pdf.set_draw_color(*BORDER_COLOR)
     for idx, m in enumerate(METRIC_COLS):
-        bg = ROW_ALT if idx % 2 == 1 else (255, 255, 255)
+        val = primary_sums.get(m, 0)
+        is_neg_bal = (m == "BAL. QTY" and val < 0)
+        
+        bg = RED_BG if is_neg_bal else (ROW_ALT if idx % 2 == 1 else (255, 255, 255))
+        txt = RED_TEXT if is_neg_bal else TEXT_DARK
+
         pdf.set_fill_color(*bg)
-        pdf.set_text_color(*TEXT_DARK)
-        
-        pdf.cell(sum_widths[0], 5, f"  {m}", border="LRB", align="L", fill=True)
-        
-        if m == "BAL. QTY":
-            bg_bal, txt_bal = get_bal_qty_color(primary_sums.get(m, 0), p33, p66)
-            pdf.set_fill_color(*bg_bal)
-            pdf.set_text_color(*txt_bal)
+        pdf.set_text_color(*txt)
+        if is_neg_bal:
             pdf.set_font("Helvetica", "B", 8)
-            pdf.cell(sum_widths[1], 5, f"{primary_sums.get(m, 0):,.3f}  ", border="LRB", align="R", fill=True)
-            pdf.set_font("Helvetica", "", 8)
-            pdf.set_fill_color(*bg)
-            pdf.set_text_color(*TEXT_DARK)
-        else:
-            pdf.cell(sum_widths[1], 5, f"{primary_sums.get(m, 0):,.3f}  ", border="LRB", align="R", fill=True)
+
+        pdf.cell(sum_widths[0], 5, f"  {m}", border="LRB", align="L", fill=True)
+        pdf.cell(sum_widths[1], 5, f"{val:,.3f}  ", border="LRB", align="R", fill=True)
 
         if has_compare:
-            p_val = primary_sums.get(m, 0)
             c_val = compare_sums.get(m, 0)
             pdf.cell(sum_widths[2], 5, f"{c_val:,.3f}  ", border="LRB", align="R", fill=True)
-            pdf.cell(sum_widths[3], 5, f"{p_val - c_val:+,.3f}  ", border="LRB", align="R", fill=True)
+            pdf.cell(sum_widths[3], 5, f"{val - c_val:+,.3f}  ", border="LRB", align="R", fill=True)
+            
+        pdf.set_font("Helvetica", "", 8)
         pdf.ln()
 
     # Category Charts Page
@@ -502,9 +460,21 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
             pdf.add_page()
             draw_table_header()
 
-        bg = ROW_ALT if r_idx % 2 == 1 else (255, 255, 255)
+        # Check if BAL. QTY is negative for ROW-LEVEL highlighting
+        bal_val = row.get("BAL. QTY", 0)
+        is_row_neg = (bal_val < 0)
+
+        if is_row_neg:
+            bg = RED_BG
+            txt = RED_TEXT
+            pdf.set_font("Helvetica", "B", 8)
+        else:
+            bg = ROW_ALT if r_idx % 2 == 1 else (255, 255, 255)
+            txt = TEXT_DARK
+            pdf.set_font("Helvetica", "", 8)
+
         pdf.set_fill_color(*bg)
-        pdf.set_text_color(*TEXT_DARK)
+        pdf.set_text_color(*txt)
 
         pdf.cell(col_widths[0], 5, str(int(row["SR.NO."])) if pd.notna(row.get("SR.NO.")) else "", border="LRB", align="C", fill=True)
         pdf.cell(col_widths[1], 5, str(row.get("CAT.", ""))[:12], border="LRB", align="L", fill=True)
@@ -516,19 +486,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
         pdf.cell(col_widths[7], 5, f"{row.get('INTANS', 0):,.2f}", border="LRB", align="R", fill=True)
         pdf.cell(col_widths[8], 5, f"{row.get('BOOKING', 0):,.2f}", border="LRB", align="R", fill=True)
         pdf.cell(col_widths[9], 5, f"{row.get('SAIL BSO', 0):,.2f}", border="LRB", align="R", fill=True)
-        
-        # COLOR-CODED BAL. QTY CELL
-        bal_val = row.get("BAL. QTY", 0)
-        bal_bg, bal_txt = get_bal_qty_color(bal_val, p33, p66)
-        pdf.set_fill_color(*bal_bg)
-        pdf.set_text_color(*bal_txt)
-        pdf.set_font("Helvetica", "B", 8)
         pdf.cell(col_widths[10], 5, f"{bal_val:,.2f}", border="LRB", align="R", fill=True)
-        
-        # Reset row styling
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_fill_color(*bg)
-        pdf.set_text_color(*TEXT_DARK)
         pdf.ln()
 
     # Total Row
@@ -731,9 +689,6 @@ if uploaded_file:
         df_primary = parse_sheet_data(uploaded_file, selected_date)
         primary_sums = df_primary[METRIC_COLS].sum()
 
-        # Calculate Percentile Thresholds for BAL. QTY
-        p33, p66 = get_bal_qty_thresholds(df_primary)
-
         df_compare, compare_sums = None, None
         if compare_date:
             df_compare = parse_sheet_data(uploaded_file, compare_date)
@@ -805,12 +760,12 @@ if uploaded_file:
             total_row[col] = primary_sums[col]
         df_display = pd.concat([df_display, pd.DataFrame([total_row])], ignore_index=True)
         
-        # Display conditionally styled Dataframe in Streamlit
-        st.dataframe(style_bal_qty(df_display, p33, p66), use_container_width=True)
+        # Display conditionally styled Dataframe (Row highlighted red if BAL. QTY < 0)
+        st.dataframe(style_negative_bal_qty_rows(df_display), use_container_width=True)
 
         st.markdown("---")
         st.header("📥 Export Report")
-        pdf_bytes = generate_pdf_report(selected_date, df_primary, primary_sums, compare_date, compare_sums, p33, p66)
+        pdf_bytes = generate_pdf_report(selected_date, df_primary, primary_sums, compare_date, compare_sums)
         filename = f"Stock_Report_{selected_date}.pdf" if not compare_date else f"Stock_Comparison_{selected_date}_vs_{compare_date}.pdf"
         st.download_button("📄 Download Daily Stock PDF Report", data=pdf_bytes, file_name=filename, mime="application/pdf")
 
