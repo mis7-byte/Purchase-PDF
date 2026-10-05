@@ -395,7 +395,7 @@ def generate_pdf_report(date_str, df_primary, primary_sums, compare_date=None, c
         pdf.image(bar_buf, x=12, y=chart_y, w=img_w, h=img_h)
         pdf.image(pie_buf, x=150, y=chart_y, w=img_w, h=img_h)
 
-    # Date Comparison Visual Page (ADDED)
+    # Date Comparison Visual Page
     if has_compare:
         pdf.add_page()
         pdf.set_font("Helvetica", "B", 13)
@@ -716,38 +716,12 @@ if uploaded_file:
         st.markdown("---")
         st.header(f"📄 Detailed Data Table ({selected_date})")
         df_display = df_primary.copy()
-        
-        # Calculate the average of positive BAL. QTY values for dynamic color thresholding
-        positive_bal_qtys = df_display[df_display["BAL. QTY"] >= 0]["BAL. QTY"]
-        bal_avg = positive_bal_qtys.mean() if not positive_bal_qtys.empty else 0.0
-
-        def style_bal_qty(val):
-            try:
-                val = float(val)
-                if val < 0:
-                    return "background-color: #ffcdd2; color: #b71c1c; font-weight: bold;"  # Red (Negative)
-                elif 0 <= val < bal_avg:
-                    return "background-color: #fff9c4; color: #f57f17; font-weight: bold;"  # Yellow (Below Average)
-                else:
-                    return "background-color: #c8e6c9; color: #1b5e20; font-weight: bold;"  # Green (Above Average)
-            except (ValueError, TypeError):
-                return ""
-
-        # Prepare Total Row
         total_row = {col: "" for col in df_display.columns}
         total_row["SR.NO."] = "TOTAL"
         for col in METRIC_COLS:
             total_row[col] = primary_sums[col]
-            
         df_display = pd.concat([df_display, pd.DataFrame([total_row])], ignore_index=True)
-
-        # Apply styling to BAL. QTY column
-        styled_df = df_display.style.map(style_bal_qty, subset=["BAL. QTY"]).format(
-            {col: "{:,.3f}" for col in METRIC_COLS if col in df_display.columns},
-            na_rep=""
-        )
-
-        st.dataframe(styled_df, use_container_width=True)
+        st.dataframe(df_display, use_container_width=True)
 
         st.markdown("---")
         st.header("📥 Export Report")
