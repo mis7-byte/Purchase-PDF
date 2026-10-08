@@ -168,10 +168,6 @@ def parse_material_lifting_sheet(uploaded_file, sheet_name):
         "QUANTITY"
     ]
 
-    cat_aliases = [
-        "CAT.", "CAT", "CATEGORY", "MATERIAL CATEGORY"
-    ]
-
     # The original sheet has the column headers in the SECOND row.
     # Check both row 1 (Excel row 2) and row 0 for compatibility.
     candidates = []
@@ -197,13 +193,8 @@ def parse_material_lifting_sheet(uploaded_file, sheet_name):
                 candidate,
                 qty_aliases
             )
-            cat_col = find_column_from_headers(
-                candidate,
-                cat_aliases
-            )
-
             candidates.append(
-                (candidate, party_col, qty_col, cat_col, header_row)
+                (candidate, party_col, qty_col, header_row)
             )
 
             if party_col is not None and qty_col is not None:
@@ -232,17 +223,6 @@ def parse_material_lifting_sheet(uploaded_file, sheet_name):
         raw[qty_col],
         errors="coerce"
     ).fillna(0.0)
-
-    if cat_col is not None:
-        result["CAT."] = (
-            raw[cat_col]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-            .str.upper()
-        )
-    else:
-        result["CAT."] = ""
 
     # Remove completely blank party rows and Excel summary/total rows.
     result = result[
@@ -374,8 +354,6 @@ def generate_material_lifting_pdf_report(df_lift):
 
     total_qty = float(df_lift["LIFTED QTY"].sum())
     party_summary = df_lift.groupby("PARTY NAME", as_index=False)["LIFTED QTY"].sum().sort_values("LIFTED QTY", ascending=False)
-    cat_summary = df_lift.groupby("CAT.", as_index=False)["LIFTED QTY"].sum() if df_lift["CAT."].astype(str).str.strip().ne("").any() else pd.DataFrame(columns=["CAT.", "LIFTED QTY"])
-
     pdf.set_fill_color(*PRIMARY_COLOR)
     pdf.rect(0, 0, 297, 22, style="F")
     pdf.set_xy(0, 6)
@@ -386,8 +364,6 @@ def generate_material_lifting_pdf_report(df_lift):
 
     draw_metric_card(pdf, 12, pdf.get_y(), 66, 15, "TOTAL LIFTED QTY", total_qty, unit="MT")
     draw_metric_card(pdf, 81, pdf.get_y(), 66, 15, "PARTIES", len(party_summary), unit="")
-    draw_metric_card(pdf, 150, pdf.get_y(), 66, 15, "CATEGORIES", len(cat_summary), unit="")
-
     pdf.set_y(pdf.get_y() + 23)
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_text_color(*PRIMARY_COLOR)
@@ -403,8 +379,8 @@ def generate_material_lifting_pdf_report(df_lift):
     pdf.cell(0, 8, "Material Lifting Qty - Detailed Data", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
 
-    cols = ["SR.NO.", "PARTY NAME", "CAT.", "LIFTED QTY"]
-    widths = [20, 115, 55, 82]
+    cols = ["SR.NO.", "PARTY NAME", "LIFTED QTY"]
+    widths = [20, 185, 67]
 
     def lifting_header():
         pdf.set_font("Helvetica", "B", 8)
@@ -425,9 +401,8 @@ def generate_material_lifting_pdf_report(df_lift):
         pdf.set_fill_color(*bg)
         pdf.set_text_color(*TEXT_DARK)
         pdf.cell(widths[0], 5, str(idx), border="LRB", align="C", fill=True)
-        pdf.cell(widths[1], 5, str(row.get("PARTY NAME", ""))[:55], border="LRB", align="L", fill=True)
-        pdf.cell(widths[2], 5, str(row.get("CAT.", ""))[:25], border="LRB", align="C", fill=True)
-        pdf.cell(widths[3], 5, f"{row.get('LIFTED QTY', 0):,.3f}", border="LRB", align="R", fill=True)
+        pdf.cell(widths[1], 5, str(row.get("PARTY NAME", ""))[:75], border="LRB", align="L", fill=True)
+        pdf.cell(widths[2], 5, f"{row.get('LIFTED QTY', 0):,.3f}", border="LRB", align="R", fill=True)
         pdf.ln()
 
     if pdf.get_y() > 180:
@@ -437,8 +412,8 @@ def generate_material_lifting_pdf_report(df_lift):
     pdf.set_font("Helvetica", "B", 8)
     pdf.set_fill_color(220, 238, 222)
     pdf.set_text_color(20, 83, 45)
-    pdf.cell(widths[0] + widths[1] + widths[2], 6, "TOTAL", border=1, align="C", fill=True)
-    pdf.cell(widths[3], 6, f"{total_qty:,.3f}", border=1, align="R", fill=True)
+    pdf.cell(widths[0] + widths[1], 6, "TOTAL", border=1, align="C", fill=True)
+    pdf.cell(widths[2], 6, f"{total_qty:,.3f}", border=1, align="R", fill=True)
     pdf.ln()
     return bytes(pdf.output())
 
@@ -1209,26 +1184,13 @@ if uploaded_file:
             .sort_values("LIFTED QTY", ascending=False)
         )
 
-        has_categories = df_lift["CAT."].astype(str).str.strip().ne("").any()
-        if has_categories:
-            category_summary = (
-                df_lift.groupby("CAT.", as_index=False)["LIFTED QTY"]
-                .sum()
-                .sort_values("LIFTED QTY", ascending=False)
-            )
-        else:
-            category_summary = pd.DataFrame(columns=["CAT.", "LIFTED QTY"])
-
         st.header("🚚 Material Lifting Qty")
 
-        k1, k2, k3 = st.columns(3)
+        k1, k2 = st.columns(2)
         with k1:
             st.metric("TOTAL LIFTED QTY", f"{total_lift_qty:,.3f} MT")
         with k2:
             st.metric("PARTIES", f"{len(party_summary):,}")
-        with k3:
-            st.metric("CATEGORIES", f"{len(category_summary):,}")
-
         st.markdown("---")
         st.header("📈 Visual Analytics")
 
@@ -1278,23 +1240,10 @@ if uploaded_file:
             else:
                 st.info("No positive lifting quantity is available for the donut chart.")
 
-        if not category_summary.empty:
-            st.markdown("---")
-            st.subheader("📊 Lifted Quantity by Category")
-            fig_lift_cat = px.bar(
-                category_summary,
-                x="CAT.",
-                y="LIFTED QTY",
-                title="Lifted Quantity by Category (MT)",
-                text_auto=".2f"
-            )
-            fig_lift_cat.update_traces(textposition="outside")
-            st.plotly_chart(fig_lift_cat, use_container_width=True)
-
         st.markdown("---")
         st.header("📄 Detailed Material Lifting Qty")
 
-        df_lift_display = df_lift.copy()
+        df_lift_display = df_lift[["PARTY NAME", "LIFTED QTY"]].copy()
         total_lift_row = {
             col: ""
             for col in df_lift_display.columns
@@ -1323,3 +1272,55 @@ if uploaded_file:
 
 else:
     st.info("👈 Please upload your stock Excel file from the sidebar to begin.")
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
+# Material Lifting Qty uses only PARTY NAME and LIFT QTY (MT); CAT. is intentionally excluded.
